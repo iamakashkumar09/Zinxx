@@ -42,6 +42,10 @@ export default function DreamToStoryApp() {
         if (isMounted && session && session.id) {
           setUser(session);
           loadDreamsFromDB(String(session.id));
+          if (localStorage.getItem('dream_arc_view') === 'auth') {
+            setView('studio');
+            localStorage.setItem('dream_arc_view', 'studio');
+          }
         }
       } catch (err) {
         console.warn("Session check error:", err);
@@ -55,7 +59,11 @@ export default function DreamToStoryApp() {
 
     const savedView = localStorage.getItem('dream_arc_view');
     if (savedView && ['landing', 'studio', 'library', 'auth'].includes(savedView)) {
-      setView(savedView);
+      if (savedView === 'auth') {
+        setView('landing');
+      } else {
+        setView(savedView);
+      }
     }
 
     const savedFavs = localStorage.getItem('dream_arc_favs');
@@ -64,13 +72,14 @@ export default function DreamToStoryApp() {
     }
 
     const handlePopState = (e: PopStateEvent) => {
-      if (e.state && e.state.view) {
-        setView(e.state.view);
-        localStorage.setItem('dream_arc_view', e.state.view);
-      } else {
-        const fallback = localStorage.getItem('dream_arc_view') || 'landing';
-        setView(fallback);
+      const targetView = (e.state && e.state.view) ? e.state.view : (localStorage.getItem('dream_arc_view') || 'landing');
+      if (targetView === 'auth' && user) {
+        setView('studio');
+        localStorage.setItem('dream_arc_view', 'studio');
+        return;
       }
+      setView(targetView);
+      localStorage.setItem('dream_arc_view', targetView);
     };
     window.addEventListener('popstate', handlePopState);
 
@@ -126,7 +135,11 @@ export default function DreamToStoryApp() {
     if (view === newView) return;
     localStorage.setItem('dream_arc_view', newView);
     if (typeof window !== 'undefined') {
-      window.history.pushState({ view: newView }, '', '');
+      if (view === 'auth') {
+        window.history.replaceState({ view: newView }, '', '');
+      } else {
+        window.history.pushState({ view: newView }, '', '');
+      }
     }
     // Refresh dreams from DB every time user opens the Vault
     if (newView === 'library' && user) {
@@ -143,7 +156,11 @@ export default function DreamToStoryApp() {
   const navigateToView = (newView: string) => {
     localStorage.setItem('dream_arc_view', newView);
     if (typeof window !== 'undefined') {
-      window.history.pushState({ view: newView }, '', '');
+      if (view === 'auth') {
+        window.history.replaceState({ view: newView }, '', '');
+      } else {
+        window.history.pushState({ view: newView }, '', '');
+      }
     }
     setView(newView);
   };
