@@ -51,14 +51,9 @@ async def main():
         totems = [n for n in graph.nodes if getattr(n, "is_recurring_symbol", False)]
         if totems:
             print(f"   - Detected recurring symbols: {[t.label for t in totems]}")
-    except ConnectionRefusedError:
-        print("❌ Module 2 failed: Connection refused.")
-        print("Note: Module 2 requires Postgres with pgvector installed and running.")
-        print("Please check DREAM_DB_URL in your .env file.")
-        return
     except Exception as e:
         print(f"❌ Module 2 failed: {e}")
-        print("Note: Module 2 requires Postgres with pgvector installed.")
+        print("Note: Module 2 requires SQLite.")
         return
 
     print("\n--- Step 3: Module 3 (Narrative Reconstruction) ---")
