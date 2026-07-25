@@ -1,22 +1,48 @@
-"""Module 2 — Dream Graph. NOT IMPLEMENTED in this build (hackathon scope).
+"""
+module2_dream_graph — Dream Graph. Public entry point.
 
-Per Architecture.md: a persistent structured representation (Character, Location,
-Object/Totem, Emotion, Event, Transition nodes with typed edges) stored in Postgres +
-pgvector, so the system can recognize recurring totems/characters across sessions via
-embedding similarity search.
+This is the public entry point for Module 2:
 
-Why skipped: this build is stateless and single-pass — Module 1 (dream_understanding)
-produces a Story directly with no persistent storage or cross-session memory. Adding this
-would require a database + embeddings pipeline, which is out of scope for the free-tier,
-single-request hackathon build.
+    from modules.module2_dream_graph import build_and_persist_graph
 
-If you pick this up: it would sit between Module 1 and Module 3 (narrative_reconstruction),
-storing what Module 1 extracts and letting Module 3 query it for continuity.
+    graph = await build_and_persist_graph(
+        dream_id=dream_id,
+        user_id=user_id,
+        story=story,
+    )
 """
 
+from shared.models import Story
+from .builder import build_graph
+from .db import init_db, load_graph, persist_graph
+from .models import DreamGraph, Edge, EdgeType, Node, NodeType
+from .totems import link_recurring_symbols
 
-def process(*args, **kwargs):
-    raise NotImplementedError(
-        "Module 2 (Dream Graph) is not implemented in this build. "
-        "See this module's docstring for the intended design."
-    )
+
+async def build_and_persist_graph(
+    dream_id: str,
+    user_id: str,
+    story: Story,
+    version: int = 1,
+) -> DreamGraph:
+    """The main entrypoint. Builds the typed graph, links recurring
+    totems, persists everything, and returns the finished graph."""
+    graph = await build_graph(dream_id, user_id, story, version)
+    graph = await link_recurring_symbols(graph)
+    await persist_graph(graph)
+    return graph
+
+
+__all__ = [
+    "build_and_persist_graph",
+    "build_graph",
+    "load_graph",
+    "persist_graph",
+    "init_db",
+    "link_recurring_symbols",
+    "DreamGraph",
+    "Node",
+    "Edge",
+    "NodeType",
+    "EdgeType",
+]
