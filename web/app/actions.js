@@ -94,7 +94,7 @@ export async function registerUser(email, password, name) {
   }
 }
 
-export async function saveDream(userId, inputText, storyData, lens) {
+export async function saveDream(userId, inputText, storyData, lens, isFavorite = false) {
   if (!prisma) {
     return {
       id: Date.now().toString(),
@@ -102,12 +102,13 @@ export async function saveDream(userId, inputText, storyData, lens) {
       inputText,
       storyData,
       lens,
+      isFavorite,
       createdAt: Date.now()
     };
   }
   try {
     const dream = await prisma.dream.create({
-      data: { userId, inputText, storyData, lens }
+      data: { userId, inputText, storyData, lens, isFavorite }
     });
     return {
       ...dream,
@@ -121,6 +122,7 @@ export async function saveDream(userId, inputText, storyData, lens) {
       inputText,
       storyData,
       lens,
+      isFavorite,
       createdAt: Date.now()
     };
   }
@@ -150,6 +152,23 @@ export async function deleteDream(id) {
   } catch (e) {
     console.warn("Prisma deleteDream error:", e.message);
     return { id, deleted: true };
+  }
+}
+
+export async function toggleDreamFavorite(id, isFavorite) {
+  if (!prisma) return { id, isFavorite };
+  try {
+    const updated = await prisma.dream.update({
+      where: { id },
+      data: { isFavorite }
+    });
+    return {
+      ...updated,
+      createdAt: updated.createdAt ? new Date(updated.createdAt).getTime() : Date.now()
+    };
+  } catch (e) {
+    console.warn("Prisma toggleDreamFavorite error:", e.message);
+    return { id, isFavorite };
   }
 }
 

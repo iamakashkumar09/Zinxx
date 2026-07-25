@@ -1,11 +1,17 @@
 import { PrismaClient } from '@prisma/client'
+import { PrismaNeon } from '@prisma/adapter-neon'
+import { neonConfig } from '@neondatabase/serverless'
+import ws from 'ws'
+
+neonConfig.webSocketConstructor = ws;
 
 const createPrismaClient = () => {
   if (!process.env.DATABASE_URL) {
     return null;
   }
   try {
-    return new PrismaClient();
+    const adapter = new PrismaNeon({ connectionString: process.env.DATABASE_URL });
+    return new PrismaClient({ adapter });
   } catch (e) {
     console.warn("Failed to initialize PrismaClient:", e.message);
     return null;

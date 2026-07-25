@@ -6,7 +6,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { LandingPage } from './components/LandingPage';
 import { CinematicScriptView } from './components/CinematicScriptView';
 import { NARRATIVE_LENSES, PROCESSING_STEPS, MOCK_STORY_DATA, MOCK_DREAM_GRAPH, Typewriter, BlinkingCursor } from '@/lib/constants';
-import { saveDream, getDreams, deleteDream, extractDreamGraphAI, synthesizeScreenplayAI, getSessionUser, logoutUser } from './actions';
+import { saveDream, getDreams, deleteDream, toggleDreamFavorite, extractDreamGraphAI, synthesizeScreenplayAI, getSessionUser, logoutUser } from './actions';
 
 export default function DreamToStoryApp() {
   const [user, setUser] = useState<any>(null);
@@ -108,6 +108,12 @@ export default function DreamToStoryApp() {
       const data = await getDreams(userId);
       if (data && Array.isArray(data)) {
         setSavedDreams(data);
+        const dbFavs = data.filter((d: any) => d.isFavorite).map((d: any) => d.id);
+        setFavoriteIds(prev => {
+          const combined = Array.from(new Set([...prev, ...dbFavs]));
+          localStorage.setItem('dream_arc_favs', JSON.stringify(combined));
+          return combined;
+        });
       }
     } catch (err) {
       console.warn("Could not fetch from DB, using local state fallback:", err);
@@ -142,14 +148,24 @@ export default function DreamToStoryApp() {
     setView(newView);
   };
 
-  const toggleFavorite = (dreamId: string, e: any) => {
+  const toggleFavorite = async (dreamId: string, e: any) => {
     e.stopPropagation();
+    let newIsFav = false;
     setFavoriteIds(prev => {
       const exists = prev.includes(dreamId);
+      newIsFav = !exists;
       const updated = exists ? prev.filter(id => id !== dreamId) : [...prev, dreamId];
       localStorage.setItem('dream_arc_favs', JSON.stringify(updated));
       return updated;
     });
+    setSavedDreams(prev => prev.map(d => d.id === dreamId ? { ...d, isFavorite: newIsFav } : d));
+    if (dreamId && !dreamId.startsWith('usr_') && isNaN(Number(dreamId))) {
+      try {
+        await toggleDreamFavorite(dreamId, newIsFav);
+      } catch (err) {
+        console.warn("Could not save favorite to DB:", err);
+      }
+    }
   };
 
   const handleInput = (e: any, ref: any) => {
@@ -190,12 +206,12 @@ export default function DreamToStoryApp() {
   const handleSaveToVault = async (text: string, resultData: any, lens: string) => {
     if (!user) return;
     const userId = (user as any).id;
-    const newDream = { id: Date.now().toString(), userId, inputText: text, storyData: resultData, lens, createdAt: Date.now() };
+    const newDream = { id: Date.now().toString(), userId, inputText: text, storyData: resultData, lens, isFavorite: false, createdAt: Date.now() };
     setSavedDreams(prev => [newDream, ...prev]);
     // Only save to DB if user has a real DB ID (cuid), not a local fallback usr_ ID
     if (userId && !userId.startsWith('usr_')) {
       try {
-        const saved = await saveDream(userId, text, resultData, lens);
+        const saved = await saveDream(userId, text, resultData, lens, false);
         if (saved && saved.id) {
           setSavedDreams(prev => prev.map((d: any) => d.id === newDream.id ? saved : d));
         }

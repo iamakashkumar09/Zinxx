@@ -18,11 +18,12 @@ model User {
 }
 
 model Dream {
-  id        String   @id @default(cuid())
-  userId    String
-  inputText String
-  storyData Json
-  lens      String
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  userId     String
+  inputText  String
+  storyData  Json
+  lens       String
+  isFavorite Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
