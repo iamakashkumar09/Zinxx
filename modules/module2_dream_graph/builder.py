@@ -19,6 +19,25 @@ def slugify(text: str) -> str:
     return re.sub(r'[^a-z0-9]+', '_', text.lower()).strip('_')
 
 
+def _scene_summary(scene) -> str:
+    """Compact, concrete summary of a Story scene's actual content (dialogue + sound
+    cues) so downstream reconstruction has real material to preserve instead of just
+    a setting label to improvise from."""
+    parts: list[str] = []
+    for line in scene.lines:
+        text = line.text.strip()
+        if text:
+            parts.append(f"{line.speaker}: {text}")
+    sound_bits = _sound_sources(scene)
+    if sound_bits:
+        parts.append("sounds heard: " + "; ".join(sound_bits))
+    return " | ".join(parts)[:1200]
+
+
+def _sound_sources(scene) -> list[str]:
+    return [cue.prompt.strip() for cue in scene.sound_cues if cue.prompt and cue.prompt.strip()]
+
+
 async def build_graph(
     dream_id: str,
     user_id: str,
@@ -52,7 +71,22 @@ async def build_graph(
                 id=event_id,
                 type=NodeType.event,
                 label=f"Scene {scene.id}: {scene.setting}",
-                attributes={"emotional_tone": scene.emotional_tone},
+                attributes={
+                    "emotional_tone": scene.emotional_tone,
+                    # Module 3 only ever sees this Node — without the concrete lines/sound
+                    # cues Module 1 already extracted, it has nothing but a one-line setting
+                    # to reconstruct from and has to invent everything, which is how specific
+                    # sensory detail (thunder, a dog barking, glass shattering...) turns into
+                    # vague generic prose. Carrying it forward here keeps it grounded.
+                    "summary": _scene_summary(scene),
+                    # Kept separate (not just parsed back out of "summary") so Module 7 can
+                    # mechanically verify every one of these ends up as a sound_cue somewhere
+                    # in the final screenplay, instead of trusting the LLM's prose to have
+                    # kept all of them — narrative reconstruction is generative and can drop
+                    # detail even when instructed not to.
+                    "sound_sources": "; ".join(_sound_sources(scene)),
+                    "location": scene.setting,
+                },
             )
         )
 
