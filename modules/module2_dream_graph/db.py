@@ -53,7 +53,7 @@ class GraphNodeRow(Base):
     matched_totem_id = Column(String, nullable=True)
     matched_totem_similarity = Column(Float, nullable=True)
     embedding = Column(Vector(_EMBED_DIM), nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class GraphEdgeRow(Base):

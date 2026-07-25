@@ -1,20 +1,67 @@
-"""Module 3 — Narrative Reconstruction Engine. Folded into Module 1 in this build.
+"""
+Module 3 — Narrative Reconstruction Engine
 
-Per Architecture.md: fill narrative gaps while preserving surreal dream logic — the main
-creative-writing LLM call, fed by the Dream Graph as structured context.
+Public API:
 
-Current status: this build has no separate Dream Graph (Module 2) to feed from, so this
-step's job is done inline as part of Module 1's (dream_understanding) single Groq call —
-the same prompt that extracts entities also fills gaps and stays close to dream logic.
+    from modules.module3_narrative_reconstruction import (
+        NarrativeReconstructionEngine,
+        ReconstructionInput,
+        SessionMeta, ReconstructionConfig, RippleContext,
+        NarrativeOutput,
+    )
 
-If you pick this up: split it out as its own Groq call that takes Module 2's Dream Graph
-as input and produces a reconstructed narrative, decoupling "understand what was said"
-from "write the coherent version" — lets you swap/tune each independently.
+The Dream Graph types (DreamGraph, Node, Edge, NodeType, EdgeType) are re-exported
+here for convenience, but their canonical home is modules.module2_dream_graph.models.
+Modules 4/5/6 should import the engine and graph types from their respective modules;
+do NOT rely on this file as the single source for graph types.
+
+See README.md for the full input/output contract and how Modules 4/5/6 reuse this
+engine.
 """
 
+from .engine import NarrativeReconstructionEngine
+from .llm_client import NarrativeLLMClient, LLMCallError
+from .schemas import (
+    # Graph types — canonical home is module2_dream_graph.models; re-exported here
+    # so existing callers of this package don't need to change their import paths.
+    DreamGraph,
+    Node,
+    Edge,
+    NodeType,
+    EdgeType,
+    # Module 3-specific input/output types
+    ConversationTurn,
+    SessionMeta,
+    ReconstructionConfig,
+    RippleContext,
+    ReconstructionInput,
+    NarrativeOutput,
+    NarrativeBeat,
+    GapFill,
+    GraphUpdate,
+    GenerationMetadata,
+)
 
-def process(*args, **kwargs):
-    raise NotImplementedError(
-        "Module 3 (Narrative Reconstruction) is not a separate step in this build — its "
-        "job currently happens inside module1_dream_understanding/story_extraction.py."
-    )
+__all__ = [
+    # Engine
+    "NarrativeReconstructionEngine",
+    "NarrativeLLMClient",
+    "LLMCallError",
+    # Graph types (from Module 2, re-exported for convenience)
+    "DreamGraph",
+    "Node",
+    "Edge",
+    "NodeType",
+    "EdgeType",
+    # I/O types
+    "ConversationTurn",
+    "SessionMeta",
+    "ReconstructionConfig",
+    "RippleContext",
+    "ReconstructionInput",
+    "NarrativeOutput",
+    "NarrativeBeat",
+    "GapFill",
+    "GraphUpdate",
+    "GenerationMetadata",
+]
