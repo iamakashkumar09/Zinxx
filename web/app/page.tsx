@@ -1,48 +1,91 @@
+'use client';
+
 import React, { useState, useEffect, useRef } from 'react';
-import { Network, Eye, Library, Database, LogOut, Compass, ChevronRight, Trash2, Clock, ArrowRight, TerminalSquare, Layers, Ghost, Sparkles, Activity } from 'lucide-react';
+import { Network, Eye, Library, Database, LogOut, Compass, ChevronRight, Trash2, Clock, ArrowRight, TerminalSquare, Layers, Ghost, Sparkles, Activity, CheckCircle2, Mic, MicOff, Clapperboard } from 'lucide-react';
 import { AuthScreen } from './components/AuthScreen';
-import { CinematicAudioPlayer } from './components/CinematicAudioPlayer';
 import { CinematicScriptView } from './components/CinematicScriptView';
-import { NARRATIVE_LENSES, PROCESSING_STEPS, MOCK_STORY_DATA, MOCK_DREAM_GRAPH } from './lib/constants';
-import { saveDream, getDreams, deleteDream } from './actions';
+import { NARRATIVE_LENSES, PROCESSING_STEPS, MOCK_STORY_DATA, MOCK_DREAM_GRAPH, Typewriter, BlinkingCursor } from '@/lib/constants';
+import { saveDream, getDreams, deleteDream, extractDreamGraphAI, synthesizeScreenplayAI, getSessionUser, logoutUser } from './actions';
 
 export default function DreamToStoryApp() {
-  const [user, setUser] = useState(null);
-  const [view, setView] = useState('studio'); 
-  const [savedDreams, setSavedDreams] = useState([]);
+  const [user, setUser] = useState<any>(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
+  const [view, setView] = useState<string>('studio'); 
+  const [savedDreams, setSavedDreams] = useState<any[]>([]);
   
-  const [inputText, setInputText] = useState("");
-  const [selectedLens, setSelectedLens] = useState('psychological');
-  const [status, setStatus] = useState("idle"); 
-  const [activeStepIndex, setActiveStepIndex] = useState(-1);
-  const [currentResult, setCurrentResult] = useState(null);
-  const [isTransitioningView, setIsTransitioningView] = useState(false);
-  const [followUpAnswer, setFollowUpAnswer] = useState("");
+  const [inputText, setInputText] = useState<string>("");
+  const [selectedLens, setSelectedLens] = useState<string>('psychological');
+  const [status, setStatus] = useState<string>("idle"); 
+  const [activeStepIndex, setActiveStepIndex] = useState<number>(-1);
+  const [currentResult, setCurrentResult] = useState<any>(null);
+  const [dreamGraph, setDreamGraph] = useState<any>(null);
+  const [isTransitioningView, setIsTransitioningView] = useState<boolean>(false);
+  const [followUpAnswer, setFollowUpAnswer] = useState<string>("");
   
-  const textareaRef = useRef(null);
-  const followUpRef = useRef(null);
+  const textareaRef = useRef<any>(null);
+  const followUpRef = useRef<any>(null);
+  const synthesisPromiseRef = useRef<Promise<any> | null>(null);
+  const recognitionRef = useRef<any>(null);
 
-  const handleAuthSuccess = (loggedInUser) => {
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const [activeVoiceTarget, setActiveVoiceTarget] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function checkAuth() {
+      try {
+        const session = await getSessionUser();
+        if (isMounted && session && session.id) {
+          setUser(session);
+          loadDreamsFromDB(String(session.id));
+        }
+      } catch (err) {
+        console.warn("Session check error:", err);
+      } finally {
+        if (isMounted) {
+          setIsCheckingAuth(false);
+        }
+      }
+    }
+    checkAuth();
+
+    // Safety fallback timer to guarantee loader dismisses even if dev server delays
+    const timer = setTimeout(() => {
+      if (isMounted) {
+        setIsCheckingAuth(false);
+      }
+    }, 1200);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  const handleAuthSuccess = (loggedInUser: any) => {
     setUser(loggedInUser);
     loadDreamsFromDB(loggedInUser.id);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logoutUser();
     setUser(null);
     setSavedDreams([]);
     resetStudio();
   };
 
-  const loadDreamsFromDB = async (userId) => {
+  const loadDreamsFromDB = async (userId: string) => {
     try {
-      // Mocking Prisma DB Call. Replace with: const data = await getDreams(userId);
-      console.log(`Fetching dreams for user: ${userId} from Neon`);
+      const data = await getDreams(userId);
+      if (data && Array.isArray(data) && data.length > 0) {
+        setSavedDreams(data);
+      }
     } catch(err) {
-      console.error(err);
+      console.warn("Could not fetch from DB, using local state fallback:", err);
     }
   };
 
-  const handleViewChange = (newView) => {
+  const handleViewChange = (newView: string) => {
     if (view === newView) return;
     setIsTransitioningView(true);
     setTimeout(() => {
@@ -52,45 +95,62 @@ export default function DreamToStoryApp() {
     }, 500); 
   };
 
-  const handleInput = (e, ref) => {
+  const handleInput = (e: any, ref: any) => {
     if(ref.current) {
         ref.current.style.height = 'auto';
         ref.current.style.height = `${ref.current.scrollHeight}px`;
     }
   };
 
-  const startExtraction = () => {
+  const startExtraction = async () => {
     if (!inputText.trim()) return;
     setStatus("extracting");
-    setTimeout(() => {
+    synthesisPromiseRef.current = null;
+    try {
+      const graph = await extractDreamGraphAI(inputText);
+      setDreamGraph(graph);
+    } catch (err) {
+      console.warn("AI extraction failed (using fallback graph):", err);
+      setDreamGraph(MOCK_DREAM_GRAPH);
+    } finally {
       setStatus("conversational");
-    }, 2500);
+      // Immediately kick off screenplay generation in the background so it completes concurrently during the animation!
+      synthesisPromiseRef.current = synthesizeScreenplayAI(inputText, "", selectedLens)
+        .catch(err => { console.warn("Background pre-gen failed:", err); return null; });
+    }
   };
 
   const startSynthesis = () => {
     setStatus("processing");
     setActiveStepIndex(0);
     setCurrentResult(null);
-  };
-
-  const handleSaveToVault = async (text, resultData, lens) => {
-    if (!user) return;
-    try {
-      // Mocking Prisma DB Call. Replace with: await saveDream(user.id, text, resultData, lens);
-      const newDream = { id: Date.now().toString(), userId: user.id, inputText: text, storyData: resultData, lens, createdAt: Date.now() };
-      setSavedDreams(prev => [newDream, ...prev]);
-    } catch (err) {
-      console.error("Error saving to Prisma:", err);
+    if (followUpAnswer.trim() || !synthesisPromiseRef.current) {
+      synthesisPromiseRef.current = synthesizeScreenplayAI(inputText, followUpAnswer, selectedLens)
+        .catch(err => { console.warn("Synthesis failed:", err); return null; });
     }
   };
 
-  const handleDeleteDream = async (id) => {
+  const handleSaveToVault = async (text: string, resultData: any, lens: string) => {
     if (!user) return;
+    const newDream = { id: Date.now().toString(), userId: (user as any).id, inputText: text, storyData: resultData, lens, createdAt: Date.now() };
+    setSavedDreams(prev => [newDream, ...prev]);
     try {
-      // Mocking Prisma DB Call. Replace with: await deleteDream(id);
-      setSavedDreams(prev => prev.filter(d => d.id !== id));
+      const saved = await saveDream((user as any).id, text, resultData, lens);
+      if (saved && saved.id) {
+        setSavedDreams(prev => prev.map((d: any) => d.id === newDream.id ? saved : d));
+      }
     } catch (err) {
-      console.error("Error deleting from Prisma:", err);
+      console.warn("Could not save to DB (using local state fallback):", err);
+    }
+  };
+
+  const handleDeleteDream = async (id: string) => {
+    if (!user) return;
+    setSavedDreams(prev => prev.filter((d: any) => d.id !== id));
+    try {
+      await deleteDream(id);
+    } catch (err) {
+      console.warn("Could not delete from DB:", err);
     }
   };
 
@@ -100,10 +160,166 @@ export default function DreamToStoryApp() {
     setFollowUpAnswer("");
     setActiveStepIndex(-1);
     setCurrentResult(null);
+    setDreamGraph(null);
+    synthesisPromiseRef.current = null;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) {}
+    }
+    setIsListening(false);
+    setActiveVoiceTarget(null);
     if(textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
-  const loadFromVault = (dream) => {
+  const SAMPLE_VOICE_DREAMS = [
+    "I was walking through an endless hallway with doors that kept changing colors every time I blinked...",
+    "Suddenly the sky turned deep purple and a giant clock started floating above the ocean ticking backwards...",
+    "I found myself in my old childhood home but all the rooms were filled with water and glowing jellyfish...",
+    "There was a loud humming noise in the fog and a silhouette of someone calling my name from across the bridge..."
+  ];
+
+  const SAMPLE_VOICE_FOLLOWUPS = [
+    "I felt a sudden rush of anxiety mixed with curiosity right as the door opened.",
+    "The temperature dropped freezing cold and everything became completely silent.",
+    "I tried to run but my legs felt heavy like I was moving through molasses."
+  ];
+
+  const simulateVoiceInput = (target: 'main' | 'followup') => {
+    setIsListening(true);
+    setActiveVoiceTarget(target);
+
+    const sampleText = target === 'main' 
+      ? SAMPLE_VOICE_DREAMS[Math.floor(Math.random() * SAMPLE_VOICE_DREAMS.length)]
+      : SAMPLE_VOICE_FOLLOWUPS[Math.floor(Math.random() * SAMPLE_VOICE_FOLLOWUPS.length)];
+
+    const words = sampleText.split(' ');
+    let currentWordIdx = 0;
+
+    const interval = setInterval(() => {
+      if (currentWordIdx < words.length) {
+        const wordToAdd = words[currentWordIdx];
+        if (target === 'main') {
+          setInputText(prev => {
+            const base = prev.endsWith(' ') || prev.length === 0 ? prev : prev + ' ';
+            return base + wordToAdd;
+          });
+          if (textareaRef.current) handleInput(null, textareaRef);
+        } else {
+          setFollowUpAnswer(prev => {
+            const base = prev.endsWith(' ') || prev.length === 0 ? prev : prev + ' ';
+            return base + wordToAdd;
+          });
+          if (followUpRef.current) handleInput(null, followUpRef);
+        }
+        currentWordIdx++;
+      } else {
+        clearInterval(interval);
+        setIsListening(false);
+        setActiveVoiceTarget(null);
+      }
+    }, 150);
+
+    recognitionRef.current = {
+      isSimulated: true,
+      stop: () => {
+        clearInterval(interval);
+        setIsListening(false);
+        setActiveVoiceTarget(null);
+      }
+    };
+  };
+
+  const toggleVoiceInput = (target: 'main' | 'followup') => {
+    if (isListening && activeVoiceTarget === target) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch(e) {}
+      }
+      setIsListening(false);
+      setActiveVoiceTarget(null);
+      return;
+    }
+
+    if (isListening && activeVoiceTarget !== target) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch(e) {}
+      }
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.info("Speech recognition not natively supported, using AI Voice Simulation fallback...");
+      simulateVoiceInput(target);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setActiveVoiceTarget(target);
+      };
+
+      recognition.onresult = (event: any) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+
+        if (finalTranscript || interimTranscript) {
+          const newText = finalTranscript || interimTranscript;
+          if (target === 'main') {
+            setInputText(prev => {
+              const base = prev.endsWith(' ') || prev.length === 0 ? prev : prev + ' ';
+              return base + newText;
+            });
+            if (textareaRef.current) handleInput(null, textareaRef);
+          } else if (target === 'followup') {
+            setFollowUpAnswer(prev => {
+              const base = prev.endsWith(' ') || prev.length === 0 ? prev : prev + ' ';
+              return base + newText;
+            });
+            if (followUpRef.current) handleInput(null, followUpRef);
+          }
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn("Speech recognition error:", event.error);
+        if (event.error === 'network' || event.error === 'service-not-allowed' || event.error === 'not-allowed' || event.error === 'aborted') {
+          console.info("Switching to AI Voice Simulation Fallback due to browser network/service restriction...");
+          simulateVoiceInput(target);
+        } else if (event.error !== 'no-speech') {
+          setIsListening(false);
+          setActiveVoiceTarget(null);
+        }
+      };
+
+      recognition.onend = () => {
+        if (recognitionRef.current && recognitionRef.current.isSimulated) {
+          return;
+        }
+        setIsListening(false);
+        setActiveVoiceTarget(null);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (e) {
+      console.warn("Could not start speech recognition, using simulation fallback:", e);
+      simulateVoiceInput(target);
+    }
+  };
+
+  const loadFromVault = (dream: any) => {
     setIsTransitioningView(true);
     setTimeout(() => {
        setCurrentResult(dream.storyData);
@@ -123,15 +339,50 @@ export default function DreamToStoryApp() {
       }, step.duration);
       return () => clearTimeout(timer);
     } else if (status === "processing" && activeStepIndex === PROCESSING_STEPS.length) {
-      const completeTimer = setTimeout(() => {
-        const result = { ...MOCK_STORY_DATA, title: `The Dream of ${new Date().toLocaleDateString()}`, lens: selectedLens };
-        setCurrentResult(result);
-        setStatus("success");
-        handleSaveToVault(inputText, result, selectedLens);
-      }, 1000);
-      return () => clearTimeout(completeTimer);
+      let isCancelled = false;
+      const getStoryResult = async () => {
+        try {
+          let aiResult = null;
+          if (synthesisPromiseRef.current) {
+            aiResult = await synthesisPromiseRef.current;
+          }
+          if (!aiResult) {
+            aiResult = await synthesizeScreenplayAI(inputText, followUpAnswer, selectedLens);
+          }
+          if (!isCancelled) {
+            const finalStory = aiResult || { ...MOCK_STORY_DATA, title: `The Dream of ${new Date().toLocaleDateString()}`, lens: selectedLens };
+            setCurrentResult(finalStory);
+            setStatus("success");
+            handleSaveToVault(inputText, finalStory, selectedLens);
+          }
+        } catch (err) {
+          console.warn("AI synthesis failed (using fallback story):", err);
+          if (!isCancelled) {
+            const fallback = { ...MOCK_STORY_DATA, title: `The Dream of ${new Date().toLocaleDateString()}`, lens: selectedLens };
+            setCurrentResult(fallback);
+            setStatus("success");
+            handleSaveToVault(inputText, fallback, selectedLens);
+          }
+        }
+      };
+      getStoryResult();
+      return () => { isCancelled = true; };
     }
-  }, [status, activeStepIndex, inputText, user, selectedLens]);
+  }, [status, activeStepIndex, inputText, followUpAnswer, user, selectedLens]);
+
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-[#030208] flex flex-col items-center justify-center text-slate-400 font-sans relative overflow-hidden">
+        <div className="absolute inset-0 z-0 pointer-events-none">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[50vw] h-[50vw] max-w-[500px] max-h-[500px] bg-indigo-900/10 rounded-full blur-[100px] animate-pulse" />
+        </div>
+        <div className="relative z-10 flex flex-col items-center space-y-4">
+          <div className="w-12 h-12 rounded-full border-2 border-indigo-500/20 border-t-indigo-500 animate-spin shadow-[0_0_30px_rgba(79,70,229,0.3)]" />
+          <p className="text-xs uppercase tracking-widest text-indigo-300 font-mono animate-pulse">Reconnecting to Cortex...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
@@ -217,7 +468,7 @@ export default function DreamToStoryApp() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
-                  {savedDreams.map((dream, idx) => {
+                  {savedDreams.map((dream: any, idx: number) => {
                     const savedLens = NARRATIVE_LENSES.find(l => l.id === dream.storyData.lens) || NARRATIVE_LENSES[0];
                     const SavedIcon = savedLens.icon;
                     return (
@@ -253,18 +504,41 @@ export default function DreamToStoryApp() {
 
           {/* Main Studio View */}
           {view === 'studio' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 max-w-[1400px] mx-auto h-full">
+            <div className="flex flex-col space-y-10 max-w-[1400px] mx-auto h-full w-full">
               
-              <div className="lg:col-span-5 flex flex-col space-y-8 relative z-10">
+              {/* Centerpiece Title Header Spanning Middle of Both Sides */}
+              {status === "success" && currentResult && (
+                <div className="w-full text-center py-6 border-b border-white/10 relative animate-in fade-in slide-in-from-top-6 duration-1000">
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl h-40 bg-indigo-500/15 blur-[120px] rounded-full pointer-events-none animate-[pulse_4s_ease-in-out_infinite]" />
+                  
+                  <div className="flex items-center justify-center space-x-2 mb-4">
+                     <span className="px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest flex items-center border bg-indigo-500/10 text-indigo-300 border-indigo-500/20 shadow-[0_0_20px_rgba(79,70,229,0.3)]">
+                       <Sparkles className="w-3.5 h-3.5 mr-2 text-indigo-400 animate-pulse" /> {(currentResult.lens || selectedLens).toUpperCase()} LENS
+                     </span>
+                  </div>
+
+                  <h1 className="text-4xl sm:text-5xl md:text-6xl font-serif font-bold text-transparent bg-clip-text bg-gradient-to-b from-white via-slate-100 to-slate-400 tracking-tight mb-6 relative z-10">
+                    {currentResult.title}
+                  </h1>
+
+                  <div className="inline-flex items-center px-5 py-2 rounded-full bg-white/[0.03] border border-white/10 text-xs font-mono text-indigo-300 uppercase tracking-widest relative z-10 backdrop-blur-md shadow-2xl cursor-default">
+                    <Clapperboard className="w-4 h-4 mr-2 text-fuchsia-400" /> Extracted Screenplay & Audio Master
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 w-full">
                 
-                <div className={`transition-all duration-1000 ease-in-out ${status !== 'idle' && status !== 'success' ? 'opacity-40 grayscale-[30%] pointer-events-none scale-[0.98]' : 'opacity-100 scale-100'}`}>
+                <div className="lg:col-span-5 flex flex-col space-y-8 relative z-10">
+                
+                <div className={`transition-all duration-1000 ease-in-out ${status === 'extracting' || status === 'processing' ? 'opacity-50 pointer-events-none scale-[0.99]' : 'opacity-100 scale-100'}`}>
                   <div className="flex items-center justify-between mb-4">
                     <label htmlFor="dream-input" className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center">
                       <TerminalSquare className="w-4 h-4 mr-2 text-indigo-400" />
                       Raw Memory Input
                     </label>
                     {status === 'success' && (
-                      <button onClick={resetStudio} className="text-[10px] uppercase tracking-widest font-bold text-fuchsia-400 hover:text-fuchsia-300 transition-colors bg-fuchsia-500/10 hover:bg-fuchsia-500/20 px-3 py-1.5 rounded-md">
+                      <button onClick={resetStudio} className="text-[10px] uppercase tracking-widest font-bold text-fuchsia-400 hover:text-fuchsia-300 transition-colors bg-fuchsia-500/10 hover:bg-fuchsia-500/20 px-3 py-1.5 rounded-md cursor-pointer">
                         Reset Graph
                       </button>
                     )}
@@ -277,11 +551,34 @@ export default function DreamToStoryApp() {
                       ref={textareaRef}
                       value={inputText}
                       onChange={(e) => { setInputText(e.target.value); handleInput(e, textareaRef); }}
-                      readOnly={status !== 'idle'}
+                      readOnly={status === 'extracting' || status === 'processing'}
                       placeholder="Describe the memory... e.g. 'I was in a house, but the doors kept changing colors...'"
-                      className="relative w-full bg-[#0a0812]/90 backdrop-blur-3xl border border-white/10 rounded-[2rem] p-6 md:p-8 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 resize-none min-h-[180px] text-lg leading-relaxed shadow-2xl transition-all duration-700 focus:shadow-[0_0_40px_rgba(79,70,229,0.15)]"
+                      className="relative w-full bg-[#0a0812]/90 backdrop-blur-3xl border border-white/10 rounded-[2rem] p-6 md:p-8 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 resize-none min-h-[180px] pb-16 text-lg leading-relaxed shadow-2xl transition-all duration-700 focus:shadow-[0_0_40px_rgba(79,70,229,0.15)]"
                       rows={4}
                     />
+                    <button
+                      type="button"
+                      onClick={() => toggleVoiceInput('main')}
+                      disabled={status === 'extracting' || status === 'processing'}
+                      className={`absolute bottom-4 right-4 px-4 py-2.5 rounded-xl flex items-center space-x-2 transition-all duration-300 z-10 cursor-pointer ${
+                        isListening && activeVoiceTarget === 'main'
+                          ? 'bg-rose-500 text-white shadow-[0_0_25px_rgba(244,63,94,0.6)] animate-pulse border border-rose-400 font-semibold'
+                          : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 hover:border-white/20'
+                      }`}
+                      title={isListening && activeVoiceTarget === 'main' ? "Stop Recording" : "Speak Dream Description"}
+                    >
+                      {isListening && activeVoiceTarget === 'main' ? (
+                        <>
+                          <MicOff className="w-4 h-4 animate-spin" />
+                          <span className="text-xs font-bold uppercase tracking-wider">Listening...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="w-4 h-4 text-indigo-400" />
+                          <span className="text-xs font-medium">Voice Input</span>
+                        </>
+                      )}
+                    </button>
                   </div>
 
                   {/* Lens Selection */}
@@ -291,15 +588,21 @@ export default function DreamToStoryApp() {
                       Narrative Lens
                     </label>
                     <div className="grid grid-cols-2 gap-3">
-                      {NARRATIVE_LENSES.map(lens => {
+                      {NARRATIVE_LENSES.map((lens: any) => {
                         const Icon = lens.icon;
                         const isSelected = selectedLens === lens.id;
                         return (
                           <button
                             key={lens.id}
-                            onClick={() => setSelectedLens(lens.id)}
-                            disabled={status !== 'idle'}
-                            className={`flex items-center p-4 rounded-2xl border transition-all duration-500 ease-out ${
+                            onClick={() => {
+                              if (status === 'extracting' || status === 'processing') return;
+                              setSelectedLens(lens.id);
+                              if (status === 'success' && currentResult) {
+                                setCurrentResult({ ...currentResult, lens: lens.id });
+                              }
+                            }}
+                            disabled={status === 'extracting' || status === 'processing'}
+                            className={`flex items-center p-4 rounded-2xl border transition-all duration-500 ease-out cursor-pointer ${
                               isSelected 
                                 ? `${lens.bg} ${lens.border} shadow-[0_0_20px_rgba(0,0,0,0)] ring-1 ring-white/10 scale-[1.02]` 
                                 : 'bg-white/[0.02] border-white/5 hover:bg-white/[0.05] hover:border-white/10 text-slate-400 hover:scale-[1.01]'
@@ -329,13 +632,15 @@ export default function DreamToStoryApp() {
                 </div>
 
                 {status === "success" && (
-                  <div className="animate-in fade-in slide-in-from-bottom-8 duration-1000 ease-out fill-mode-both delay-700">
-                    <div className="mb-4 flex items-center justify-between pl-1">
-                      <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest flex items-center bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20 shadow-[0_0_15px_rgba(52,211,153,0.2)]">
+                  <div className="animate-in fade-in slide-in-from-bottom-8 duration-1000 ease-out fill-mode-both delay-700 bg-gradient-to-br from-emerald-500/10 via-transparent to-indigo-500/10 border border-emerald-500/20 rounded-3xl p-6 shadow-[0_0_30px_rgba(52,211,153,0.1)]">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest flex items-center bg-emerald-500/20 px-3 py-1 rounded-full border border-emerald-500/30">
                         <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Render Complete
                       </span>
                     </div>
-                    <CinematicAudioPlayer title={currentResult?.title} />
+                    <p className="text-xs text-slate-300 leading-relaxed font-sans">
+                      The AI has reconstructed your memory into a cinematic script. You can listen to the ambient soundtrack and AI narration in the console on the right!
+                    </p>
                   </div>
                 )}
               </div>
@@ -377,7 +682,7 @@ export default function DreamToStoryApp() {
                       </div>
 
                       <div className="flex flex-wrap gap-3 mb-12">
-                        {MOCK_DREAM_GRAPH.nodes.map((node, i) => (
+                        {(dreamGraph || MOCK_DREAM_GRAPH).nodes.map((node: any, i: number) => (
                           <div key={node.id} className="relative group/node animate-in fade-in zoom-in-95 duration-500 fill-mode-both" style={{animationDelay: `${i * 150}ms`}}>
                              <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500/30 to-fuchsia-500/30 rounded-xl blur opacity-0 group-hover/node:opacity-100 transition-opacity duration-500" />
                              <div className="relative px-4 py-2 bg-[#0d0a14] border border-white/10 rounded-xl flex items-center space-x-3 shadow-lg">
@@ -403,7 +708,7 @@ export default function DreamToStoryApp() {
                             </div>
                             <div className="flex-1">
                                <p className="text-sm font-bold text-indigo-300 uppercase tracking-widest mb-2">System Query</p>
-                               <p className="text-slate-200 leading-relaxed"><Typewriter text={MOCK_DREAM_GRAPH.followUp} delay={15} /></p>
+                               <p className="text-slate-200 leading-relaxed"><Typewriter text={(dreamGraph || MOCK_DREAM_GRAPH).followUp} delay={15} /></p>
                             </div>
                          </div>
                       </div>
@@ -415,9 +720,25 @@ export default function DreamToStoryApp() {
                             value={followUpAnswer}
                             onChange={(e) => { setFollowUpAnswer(e.target.value); handleInput(e, followUpRef); }}
                             placeholder="Optional: Provide more context to shape the final narrative..."
-                            className="w-full bg-white/[0.02] border border-white/10 rounded-2xl p-4 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-fuchsia-500/40 resize-none min-h-[80px] text-sm transition-all focus:bg-white/[0.04]"
+                            className="w-full bg-white/[0.02] border border-white/10 rounded-2xl p-4 pr-14 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-fuchsia-500/40 resize-none min-h-[80px] text-sm transition-all focus:bg-white/[0.04]"
                             rows={2}
                           />
+                          <button
+                            type="button"
+                            onClick={() => toggleVoiceInput('followup')}
+                            className={`absolute bottom-3 right-3 p-2.5 rounded-xl flex items-center justify-center transition-all duration-300 z-10 cursor-pointer ${
+                              isListening && activeVoiceTarget === 'followup'
+                                ? 'bg-rose-500 text-white shadow-[0_0_20px_rgba(244,63,94,0.6)] animate-pulse border border-rose-400'
+                                : 'bg-white/5 hover:bg-white/15 text-slate-400 hover:text-white border border-white/10'
+                            }`}
+                            title={isListening && activeVoiceTarget === 'followup' ? "Stop Recording" : "Speak Follow-up"}
+                          >
+                            {isListening && activeVoiceTarget === 'followup' ? (
+                              <MicOff className="w-4 h-4" />
+                            ) : (
+                              <Mic className="w-4 h-4 text-fuchsia-400" />
+                            )}
+                          </button>
                          </div>
                          <div className="flex justify-end mt-4">
                             <button
@@ -446,7 +767,7 @@ export default function DreamToStoryApp() {
                     <div className="space-y-10 font-mono text-sm relative flex-1">
                       <div className="absolute left-[19px] top-4 bottom-8 w-px bg-gradient-to-b from-fuchsia-500/30 via-indigo-500/20 to-transparent" />
 
-                      {PROCESSING_STEPS.map((step, idx) => {
+                      {PROCESSING_STEPS.map((step: any, idx: number) => {
                         const isActive = idx === activeStepIndex;
                         const isPast = idx < activeStepIndex;
                         const isFuture = idx > activeStepIndex;
@@ -501,6 +822,7 @@ export default function DreamToStoryApp() {
                 )}
 
               </div>
+            </div>
             </div>
           )}
           

@@ -1,24 +1,18 @@
-const CinematicScriptView = ({ data }) => {
-  const lensObj = NARRATIVE_LENSES.find(l => l.id === data.lens) || NARRATIVE_LENSES[0];
+'use client';
+
+import React from 'react';
+import { Clapperboard, User, Layers, Activity, MapPin, Music } from 'lucide-react';
+import { NARRATIVE_LENSES } from '@/lib/constants';
+import { CinematicAudioPlayer } from './CinematicAudioPlayer';
+
+const CinematicScriptView = ({ data = {} }) => {
+  const lensObj = NARRATIVE_LENSES.find(l => l.id === (data?.lens || 'psychological')) || NARRATIVE_LENSES[0];
   const LensIcon = lensObj.icon;
 
   return (
     <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-1000 ease-out fill-mode-both">
-      <div className="text-center pb-8 border-b border-white/5 relative">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md h-32 bg-indigo-500/10 blur-[100px] rounded-full pointer-events-none animate-[pulse_4s_ease-in-out_infinite]" />
-        
-        <div className="flex items-center justify-center space-x-2 mb-4 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-75 fill-mode-both">
-           <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest flex items-center border ${lensObj.bg} ${lensObj.color} ${lensObj.border}`}>
-             <LensIcon className="w-3 h-3 mr-1.5" /> {lensObj.label} Lens
-           </span>
-        </div>
-
-        <h2 className="text-4xl md:text-5xl font-serif font-bold text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-400 tracking-tight mb-5 relative z-10 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100 fill-mode-both">
-          {data.title}
-        </h2>
-        <div className="inline-flex items-center px-4 py-2 rounded-full bg-white/[0.03] border border-white/10 text-xs font-mono text-indigo-300 uppercase tracking-widest relative z-10 backdrop-blur-md shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300 fill-mode-both cursor-default">
-          <Clapperboard className="w-3.5 h-3.5 mr-2" /> Extracted Screenplay
-        </div>
+      <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 delay-400 fill-mode-both">
+        <CinematicAudioPlayer title={data.title || "Master Cinematic Audio"} storyData={data} />
       </div>
 
       <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 delay-500 fill-mode-both">
@@ -105,3 +99,5 @@ const CinematicScriptView = ({ data }) => {
     </div>
   );
 };
+
+export { CinematicScriptView };

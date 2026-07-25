@@ -1,11 +1,16 @@
-const NARRATIVE_LENSES = [
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { BrainCircuit, Zap, Search, Sparkles } from 'lucide-react';
+
+export const NARRATIVE_LENSES = [
   { id: 'psychological', label: 'Psychological', icon: BrainCircuit, color: 'text-indigo-400', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
   { id: 'thriller', label: 'Thriller', icon: Zap, color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20' },
   { id: 'mystery', label: 'Mystery', icon: Search, color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
   { id: 'fantasy', label: 'Fantasy', icon: Sparkles, color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/10', border: 'border-fuchsia-500/20' }
 ];
 
-const MOCK_DREAM_GRAPH = {
+export const MOCK_DREAM_GRAPH = {
   nodes: [
     { id: 'n1', type: 'Character', label: 'Narrator', layer: 'Conscious' },
     { id: 'n2', type: 'Character', label: 'Sister', layer: 'Memory' },
@@ -16,7 +21,7 @@ const MOCK_DREAM_GRAPH = {
   followUp: "I noticed a gap in the memory: You mentioned opening the red doors, but not what was behind the final one. What did you feel right before waking up?"
 };
 
-const MOCK_STORY_DATA = {
+export const MOCK_STORY_DATA = {
   "title": "The House That Kept Changing",
   "lens": "psychological",
   "characters": [
@@ -53,20 +58,20 @@ const MOCK_STORY_DATA = {
   ]
 };
 
-const PROCESSING_STEPS = [
-  { id: 'reconstruct', label: 'Narrative Reconstruction & Layer Mapping', duration: 2500 },
-  { id: 'screenplay', label: 'Screenplay Conversion (Dialogue & Cues)', duration: 2000 },
-  { id: 'direction', label: 'Audio Direction Engine (Emotion & Casting)', duration: 2500 },
-  { id: 'voice', label: 'Synthesizing Voices (gpt-4o-mini-tts)', duration: 3000 },
-  { id: 'mix', label: 'Composing Timeline (Ducking & SFX Mix)', duration: 3500 }
+export const PROCESSING_STEPS = [
+  { id: 'reconstruct', label: 'Narrative Reconstruction & Layer Mapping', duration: 1000 },
+  { id: 'screenplay', label: 'Screenplay Conversion (Dialogue & Cues)', duration: 800 },
+  { id: 'direction', label: 'Audio Direction Engine (Emotion & Casting)', duration: 1000 },
+  { id: 'voice', label: 'Synthesizing Voices (gpt-4o-mini-tts)', duration: 1200 },
+  { id: 'mix', label: 'Composing Timeline (Ducking & SFX Mix)', duration: 1200 }
 ];
 
 // Helper components used within views
-const BlinkingCursor = () => (
+export const BlinkingCursor = () => (
   <span className="inline-block w-2 h-4 ml-1 bg-indigo-400 animate-[pulse_1s_cubic-bezier(0.4,0,0.6,1)_infinite] align-middle shadow-[0_0_8px_rgba(129,140,248,0.8)] rounded-sm" />
 );
 
-const Typewriter = ({ text, delay = 20, onComplete }) => {
+export const Typewriter = ({ text, delay = 20, onComplete = () => {} }) => {
   const [currentText, setCurrentText] = useState('');
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -85,7 +90,7 @@ const Typewriter = ({ text, delay = 20, onComplete }) => {
   return <span className="transition-all duration-75">{currentText}</span>;
 };
 
-const FauxWaveform = ({ isPlaying }) => (
+export const FauxWaveform = ({ isPlaying = false }) => (
   <div className="flex items-center space-x-1 h-8 px-4">
     {[...Array(32)].map((_, i) => (
       <div

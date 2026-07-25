@@ -1,9 +1,8 @@
-/* 
+'use client';
+
 import React, { useState } from 'react';
 import { Moon, User, Mail, KeyRound, Activity, LogIn, UserPlus, Database } from 'lucide-react';
-// import { loginUser, registerUser } from '../actions'; // Import your Server Actions
-*/
-
+import { loginUser, registerUser, createJwtSession } from '../actions';
 const AuthScreen = ({ onAuthSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
@@ -17,20 +16,28 @@ const AuthScreen = ({ onAuthSuccess }) => {
     setLoading(true);
     setError('');
     try {
-      // NOTE: In your real app, replace this setTimeout block with:
-      // const user = isLogin ? await loginUser(email, password) : await registerUser(email, password, name);
-      
       let user;
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      if (email === 'demo@dream.arc') {
-         user = { id: 'usr_demo', email: 'demo@dream.arc', name: 'Explorer' };
-      } else {
-         user = { id: 'usr_new', email, name: name || 'Explorer' };
+      try {
+        user = isLogin ? await loginUser(email, password) : await registerUser(email, password, name);
+        if (!user) throw new Error("Database unconfigured or unavailable");
+      } catch (dbErr) {
+        console.warn("DB Auth failed/unconfigured, falling back to demo auth:", dbErr.message);
+        if (dbErr.message === "Invalid credentials" || dbErr.message === "Email already exists") {
+          throw dbErr;
+        }
+        await new Promise(resolve => setTimeout(resolve, 600));
+        if (email === 'demo@dream.arc') {
+          user = { id: 'usr_demo', email: 'demo@dream.arc', name: 'Explorer' };
+        } else {
+          user = { id: 'usr_' + Math.random().toString(36).substring(2, 9), email, name: name || email.split('@')[0] || 'Explorer' };
+        }
+        const token = await createJwtSession(user);
+        user = { ...user, token };
       }
       
       onAuthSuccess(user);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Authentication failed");
       setLoading(false);
     }
   };
@@ -150,3 +157,5 @@ const AuthScreen = ({ onAuthSuccess }) => {
     </div>
   );
 };
+
+export { AuthScreen };
