@@ -57,8 +57,10 @@ _MAX_ABS_PITCH = 12
 # synthesizing every line in a story at once (asyncio.gather), leaving a truncated/corrupt
 # mp3 that pydub can't decode later during mixing. Retrying + capping concurrency fixes
 # both the cause (too many simultaneous connections) and the symptom (bad files).
-_MAX_SYNTH_ATTEMPTS = 3
-_MAX_CONCURRENT_REQUESTS = 6
+# Microsoft's anti-abuse logic gets very angry if we open multiple WS connections at once,
+# throwing "No audio was received". Dropped concurrency to 1 to fix this.
+_MAX_SYNTH_ATTEMPTS = 5
+_MAX_CONCURRENT_REQUESTS = 1
 
 
 def assign_voices(story: Story) -> dict[str, str]:
@@ -110,7 +112,7 @@ async def _synthesize_line(
             last_error = exc
         out_path.unlink(missing_ok=True)
         if attempt < _MAX_SYNTH_ATTEMPTS - 1:
-            await asyncio.sleep(0.5 * (attempt + 1))
+            await asyncio.sleep(1.5 * (attempt + 1))
 
     raise RuntimeError(
         f"Voice synthesis failed after {_MAX_SYNTH_ATTEMPTS} attempts for line {text[:60]!r}: {last_error}"

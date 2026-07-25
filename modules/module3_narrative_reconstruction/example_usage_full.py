@@ -18,8 +18,8 @@ async def main():
     print("=== Dream to Story Pipeline Test (Modules 1 -> 2 -> 3) ===\n")
     
     # Check if necessary keys are present
-    if not os.environ.get("OPENAI_API_KEY") or not os.environ.get("GROQ_API_KEY"):
-        print("[WARNING] OPENAI_API_KEY or GROQ_API_KEY not found in environment.")
+    if not os.environ.get("OPENAI_API_KEY"):
+        print("[WARNING] OPENAI_API_KEY not found in environment.")
         print("Please configure your .env file to see real LLM results.\n")
         
     dream_text = "I was in a dark forest running away from a shadow that looked like a wolf, but when I turned around it was a little girl holding a red balloon."

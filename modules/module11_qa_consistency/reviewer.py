@@ -117,7 +117,7 @@ def review_story(story: Story) -> QAReport:
         try:
             completion = client.chat.completions.create(
                 model=OPENAI_MODEL,
-                max_tokens=2048,
+                max_completion_tokens=2048,
                 response_format={"type": "json_object"},
                 messages=[{"role": "user", "content": prompt}],
             )

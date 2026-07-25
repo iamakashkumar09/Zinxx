@@ -11,13 +11,18 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4")
 
-# GROQ_API_KEY is still used for Module 1's voice transcription (Groq-hosted Whisper,
-# free tier) even though the chat-completion calls (Module 1 extraction, Module 8
-# direction) now run on OpenAI. See shared/openai_client.py vs shared/llm_client.py.
+# Module 9 (Audio Production) — Stable Audio 3 Small models from Hugging Face.
+# Requires: pip install stable-audio-tools torchaudio
+# First run downloads ~500 MB per model, cached in ~/.cache/huggingface/hub/
+STABLE_AUDIO_MUSIC_MODEL = os.environ.get(
+    "STABLE_AUDIO_MUSIC_MODEL", "stabilityai/stable-audio-3-small-music"
+)
+STABLE_AUDIO_SFX_MODEL = os.environ.get(
+    "STABLE_AUDIO_SFX_MODEL", "stabilityai/stable-audio-3-small-sfx"
+)
 
 # Module 2 (Dream Graph) — local SQLite file, zero setup (no server/URL/port/password).
 # Override via DREAM_DB_URL in .env only if you deliberately want a different backend.

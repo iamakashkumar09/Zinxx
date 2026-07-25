@@ -104,7 +104,7 @@ def _call_llm(raw_input: str) -> str:
     client = get_client()
     completion = client.chat.completions.create(
         model=OPENAI_MODEL,
-        max_tokens=4096,
+        max_completion_tokens=4096,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": PROMPT_TEMPLATE.format(raw_input=raw_input)}],
     )

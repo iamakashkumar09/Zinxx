@@ -1,79 +1,87 @@
 """Part of Module 9 — Audio Production (background music).
 
-Procedural chord-pad BGM, standing in for the OpenAI architecture's royalty-free music
-library / MusicGen — a slow sustained pad built from stacked sine waves whose root note,
-interval (major/minor/dissonant), brightness, movement, and grit are all driven by the
-scene's emotional_tone via mood.py. This is the "music matches the dream's mood" layer;
-sfx_synth.py's ambience is the literal environmental texture (wind, rain, room tone).
+Generates BGM using Stable Audio 3 Small Music. The scene's emotional_tone is
+mapped to a rich descriptive text prompt which is passed to the AI model.
 
-Mixed in very quietly by module10's mixing.py, underneath both dialogue and ambience.
+Replaces the old procedural numpy/scipy chord-pad synthesizer.
 """
 
-import numpy as np
+from __future__ import annotations
+
 from pydub import AudioSegment
 
-from .dsp import SAMPLE_RATE, linear_envelope, lowpass, sine, to_segment
-from .mood import mood_params
+from .mood import classify_mood
+from .stable_audio_client import generate_music
+
+# ---------------------------------------------------------------------------
+# Emotion → music prompt mapping
+# ---------------------------------------------------------------------------
+
+_MOOD_MUSIC_PROMPTS: dict[str, str] = {
+    "joy": (
+        "uplifting orchestral music, bright major key, warm strings and piano, "
+        "optimistic and triumphant, cinematic, moderately fast tempo"
+    ),
+    "warm": (
+        "warm acoustic music, gentle guitar and soft piano, nostalgic and tender, "
+        "slow tempo, intimate, cozy folk atmosphere"
+    ),
+    "calm": (
+        "peaceful ambient music, slow sustained strings, gentle pads, "
+        "serene and meditative, minimal, slow tempo, cinematic"
+    ),
+    "sad": (
+        "melancholic orchestral music, slow minor key, cello and piano, "
+        "sorrowful and introspective, sparse arrangement, cinematic sadness"
+    ),
+    "mysterious": (
+        "dark mysterious ambient music, eerie sustained tones, dissonant pads, "
+        "slow tempo, unsettling and surreal, dream-like, cinematic"
+    ),
+    "fear": (
+        "tense horror music, low drones, dissonant strings, rising tension, "
+        "dark and ominous, fast tremolo, cinematic suspense, no melody"
+    ),
+    "anger": (
+        "intense aggressive music, heavy low brass, driving percussion, dissonant chords, "
+        "fast and relentless, cinematic action, dark and powerful"
+    ),
+    "surprise": (
+        "dramatic cinematic music, sudden dynamic shift, bright orchestral stab, "
+        "ascending strings, building tension and release"
+    ),
+    "neutral": (
+        "ambient cinematic music, slow sustained pads, neutral tone, "
+        "understated and atmospheric, minimal, slow tempo"
+    ),
+}
 
 
-def _semitone_ratio(semitones: float) -> float:
-    return 2 ** (semitones / 12)
+def _build_music_prompt(emotional_tone: str) -> str:
+    mood = classify_mood(emotional_tone)
+    return _MOOD_MUSIC_PROMPTS.get(mood, _MOOD_MUSIC_PROMPTS["neutral"])
 
 
-def _chord_layer(freq: float, n: int, sr: int, detune_cents: float, phase: float) -> np.ndarray:
-    tone = sine(freq, n, sr, phase=phase)
-    if detune_cents > 0:
-        detuned = freq * (2 ** (detune_cents / 1200))
-        tone = 0.5 * (tone + sine(detuned, n, sr, phase=phase))
-    return tone
-
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def generate_bgm(emotional_tone: str, duration_ms: int, seed: int | None = None) -> AudioSegment:
-    """A slow sustained chord pad colored by emotional_tone. Root + fifth carry the drone,
-    the third sets major/minor/dissonant character, tremolo/distortion add movement and
-    grit for tenser moods. Long attack/release so it always feels like a sustained bed,
-    never an abrupt clip, regardless of scene length.
+    """Generate background music for a scene using Stable Audio 3 Small Music.
+
+    Args:
+        emotional_tone: The scene's emotional tone (e.g. "fear", "calm joy").
+        duration_ms: Target duration in milliseconds.
+        seed: Unused (kept for API compatibility); Stable Audio uses its own sampling.
+
+    Returns:
+        AudioSegment with AI-generated music bed.
+
+    Raises:
+        RuntimeError: If Stable Audio generation fails.
     """
     if duration_ms <= 0:
-        return AudioSegment.silent(duration=0, frame_rate=SAMPLE_RATE)
-    n = int(SAMPLE_RATE * duration_ms / 1000)
-    mood = mood_params(emotional_tone)
+        return AudioSegment.silent(duration=0)
 
-    root = mood.root_hz
-    third = root * _semitone_ratio(mood.third_semitones)
-    fifth = root * _semitone_ratio(mood.fifth_semitones)
-    octave_up = root * 2
-    sub = root / 2
-
-    # Weighted toward root/third/fifth/octave (~150Hz-1.2kHz across moods) rather than the
-    # sub layer — laptop and phone speakers reproduce that range; a 73-150Hz sub-bass layer
-    # (the old version put 45% of the pad's energy there) is often nearly silent on real
-    # playback hardware, which is exactly why the music wasn't cutting through the ambience
-    # noise. The octave-up layer exists purely for presence/clarity on small speakers.
-    pad = (
-        0.12 * _chord_layer(sub, n, SAMPLE_RATE, 0.0, phase=0.0)
-        + 0.32 * _chord_layer(root, n, SAMPLE_RATE, mood.detune_cents, phase=0.3)
-        + 0.26 * _chord_layer(third, n, SAMPLE_RATE, mood.detune_cents, phase=0.6)
-        + 0.20 * _chord_layer(fifth, n, SAMPLE_RATE, mood.detune_cents * 0.6, phase=0.9)
-        + 0.14 * _chord_layer(octave_up, n, SAMPLE_RATE, mood.detune_cents * 0.4, phase=1.2)
-    )
-
-    # slow shimmer so the sustained chord doesn't sound static/synthetic
-    shimmer = 1.0 + 0.15 * sine(0.05, n, SAMPLE_RATE)
-    pad = pad * shimmer
-
-    if mood.tremolo_hz > 0:
-        movement = 1.0 + 0.3 * sine(mood.tremolo_hz, n, SAMPLE_RATE)
-        pad = pad * movement
-
-    pad = lowpass(pad, SAMPLE_RATE, mood.brightness_hz)
-
-    if mood.distortion > 0:
-        drive = 1 + mood.distortion * 3
-        pad = np.tanh(pad * drive) / drive
-
-    attack = min(n, int(SAMPLE_RATE * 1.5))
-    release = min(n, int(SAMPLE_RATE * 1.5))
-    pad = pad * linear_envelope(n, attack, release)
-
-    return to_segment(pad * 0.5)
+    prompt = _build_music_prompt(emotional_tone)
+    return generate_music(prompt, duration_ms)

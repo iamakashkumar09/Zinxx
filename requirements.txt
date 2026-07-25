@@ -1,6 +1,5 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-groq==0.15.0
 openai==2.48.0
 transformers==4.47.1
 torch==2.5.1
@@ -13,3 +12,24 @@ pydantic==2.10.4
 python-multipart==0.0.20
 sqlalchemy==2.0.51
 aiosqlite==0.22.1
+
+# --- Stable Audio Dependencies ---
+# stable-audio-tools explicitly locks Python < 3.11 and PyWavelets==1.4.1 (which crashes on 3.12).
+# We install its dependencies here with compatible versions (PyWavelets>=1.5.0).
+# You MUST install stable-audio-tools itself using the install_stable_audio.ps1 script
+# so pip can bypass the broken version locks.
+einops==0.8.2
+einops-exts==0.0.4
+accelerate==1.14.0
+safetensors==0.8.0
+importlib-resources==7.1.0
+PyWavelets>=1.5.0
+nnAudio==0.3.4
+torchsde==0.2.6
+alias-free-torch==0.0.6
+dill
+sentencepiece>=0.2.0
+soxr
+v-diffusion-pytorch==0.0.2
+vector-quantize-pytorch==1.14.41
+torchaudio==2.5.1
