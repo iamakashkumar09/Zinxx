@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment
+myenv/
+
+# Secrets
+.env
+
+# Generated audio output
+output/*
+!output/examples/
+output/examples/*
+!output/.gitkeep
+
+# Node (if any tooling gets added)
+node_modules/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

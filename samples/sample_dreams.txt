@@ -1,0 +1,26 @@
+### Multi-character, searching/anxiety dream
+I kept opening doors in a house I didn't recognize, but none of them led where they should. I was looking for my sister, and I could hear her calling from somewhere, but every room was empty. The walls felt like they were breathing.
+
+### School dream, friend, sudden dread
+I was back in my old school, but the hallways kept stretching longer every time I turned a corner. My friend Sam was next to me laughing about something dumb, and then suddenly all the lights went out and I couldn't find him anymore. I just stood there in the dark calling his name.
+
+### Solo, nature, rising fear
+I was standing on a beach at night, completely alone, and the waves kept getting louder. I felt calm at first, just watching the water, but then a strange fear crept in as the tide started rising toward me faster than it should.
+
+### Very short / minimal input (edge case)
+I was falling and then I woke up.
+
+### Empty input (edge case — should fail gracefully)
+
+
+### Long, multi-scene, several characters
+My grandmother's kitchen, but bigger than it ever was in real life. She was baking something and humming, and my brother was sitting at the table doing homework he never actually did as a kid. Outside the window it started raining, and the rain sounded like static. I went to open the back door to check on the garden and it led into a hallway of the hospital where she used to work. A nurse I didn't recognize told me I was late for something. I tried to run back to the kitchen but the hallway kept branching. Eventually I found her again, and she just smiled like nothing had happened and handed me a plate.
+
+### Chase / tension dream
+Someone was following me through a parking garage, and I could hear footsteps echoing but never see who it was. I tried to get to my car but couldn't remember where I parked. My phone wouldn't unlock. Then a door slammed somewhere above me and I woke up with my heart pounding.
+
+### Calm / nostalgic memory
+I was a kid again in my grandfather's backyard in summer, the sound of a sprinkler going, cicadas, my cousin Mia chasing a ball. Everything was warm and slow and gold-lit, like the memory itself was underwater.
+
+### Single character, surreal
+I was floating above my own bed, watching myself sleep, and I couldn't tell if I was scared or just curious. The room slowly filled with a soft blue light and I felt weightless, like nothing bad could happen to me here.
