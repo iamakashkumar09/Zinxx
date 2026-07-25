@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Waves, Activity, Download, Pause, Play, Mic } from 'lucide-react';
+import { Waves, Activity, Download, Pause, Play, Mic, RotateCcw, RotateCw } from 'lucide-react';
 import { FauxWaveform } from '@/lib/constants';
 
 const CinematicAudioPlayer = ({ title = "Final Master.wav", storyData = null }) => {
@@ -245,13 +245,29 @@ const CinematicAudioPlayer = ({ title = "Final Master.wav", storyData = null }) 
           </button>
         </div>
 
-        <div className="flex items-center space-x-5 bg-black/40 p-4 rounded-2xl border border-white/5">
-          <button 
-            onClick={togglePlay}
-            className="w-14 h-14 shrink-0 flex items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-fuchsia-600 hover:from-indigo-400 hover:to-fuchsia-500 text-white shadow-[0_0_25px_rgba(79,70,229,0.5)] hover:shadow-[0_0_35px_rgba(232,121,249,0.7)] transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
-          >
-            {isPlaying ? <Pause className="w-6 h-6 fill-current transition-all duration-300" /> : <Play className="w-6 h-6 fill-current ml-1 transition-all duration-300" />}
-          </button>
+        <div className="flex items-center space-x-4 sm:space-x-5 bg-black/40 p-4 rounded-2xl border border-white/5">
+          <div className="flex items-center space-x-2 shrink-0">
+            <button 
+              onClick={() => setProgress(p => Math.max(0, p - 15))}
+              title="Rewind 15s / Previous"
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-all duration-300 cursor-pointer hover:scale-105 active:scale-95"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={togglePlay}
+              className="w-14 h-14 shrink-0 flex items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-fuchsia-600 hover:from-indigo-400 hover:to-fuchsia-500 text-white shadow-[0_0_25px_rgba(79,70,229,0.5)] hover:shadow-[0_0_35px_rgba(232,121,249,0.7)] transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
+            >
+              {isPlaying ? <Pause className="w-6 h-6 fill-current transition-all duration-300" /> : <Play className="w-6 h-6 fill-current ml-1 transition-all duration-300" />}
+            </button>
+            <button 
+              onClick={() => setProgress(p => Math.min(100, p + 15))}
+              title="Fast Forward 15s"
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-all duration-300 cursor-pointer hover:scale-105 active:scale-95"
+            >
+              <RotateCw className="w-4 h-4" />
+            </button>
+          </div>
           
           <div className="flex-1 min-w-0">
             <FauxWaveform isPlaying={isPlaying} />
