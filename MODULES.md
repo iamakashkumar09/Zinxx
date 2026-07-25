@@ -10,39 +10,59 @@ what's built, what talks to what, and where to plug in what isn't built yet.
 |---|---|---|---|
 | 1 | `module1_dream_understanding/` | Dream Understanding & Conversational Recovery | **Built** (OpenAI + Groq Whisper for voice input) |
 | 2 | `module2_dream_graph/` | Dream Graph | **Built** (SQLite + OpenAI embeddings) — runs as a background side-effect, not in the audio critical path |
-| 3 | `module3_narrative_reconstruction/` | Narrative Reconstruction Engine | Stub — folded into Module 1 |
-| 4 | `module4_dream_layer_engine/` | Dream Layer Engine (Inception-style) | Stub — not implemented |
-| 5 | `module5_ripple_regeneration/` | Interactive Ripple Regeneration | Stub — not implemented |
-| 6 | `module6_multi_lens_generation/` | Multi-Lens Narrative Generation | Stub — not implemented |
-| 7 | `module7_screenplay_conversion/` | Screenplay Conversion | Stub — folded into Module 1 |
+| 3 | `module3_narrative_reconstruction/` | Narrative Reconstruction Engine | **Built** (OpenAI, mock-mode fallback with no key) |
+| 4 | `module4_dream_layer_engine/` | Dream Layer Engine (Inception-style) | **Built** (orchestrates Module 3 in parallel, `/api/dream/layers`) |
+| 5 | `module5_ripple_regeneration/` | Interactive Ripple Regeneration | **Built** (graph versioning + provenance diffing, `/api/dream/edit`) |
+| 6 | `module6_multi_lens_generation/` | Multi-Lens Narrative Generation | **Built** (orchestrates Module 3 in parallel, `/api/dream/lenses`) |
+| 7 | `module7_screenplay_conversion/` | Screenplay Conversion | **Built** (OpenAI) — converts Module 3's narrative beats into a Story for Modules 8-10 |
 | 8 | `module8_audio_direction/` | Audio Direction Engine | **Built** (OpenAI + local HF classifier) |
 | 9 | `module9_audio_production/` | Audio Production | **Built** (edge-tts + procedural SFX) |
 | 10 | `module10_mixing_timeline/` | Mixing & Timeline Composition | **Built** (pydub) |
 | 11 | `module11_qa_consistency/` | Quality/Consistency Review | Stub — not implemented |
 
-Every stub folder's `__init__.py` explains, in its own docstring, why it's skipped and
-where it would plug into the pipeline if someone picks it up.
+Module 11 is the only remaining stub — its `__init__.py` explains why it's skipped and
+where it would plug in per Architecture.md's own build-priority order.
 
 ## Runtime pipeline (what actually runs on every request)
 
-The audio critical path is Modules 1, 8, 9, 10. Each one's output is literally the next
-one's input — see `app.py`, which is the one file where all of them meet:
+There are two entry points into the text pipeline, both defined in `app.py`:
 
+**`/api/story` — fast preview.** Module 1 only. This is what the frontend calls today for
+the sub-10-second "show me the story while audio generates" UX.
 ```python
-story = module1_dream_understanding.process(text)        # text -> Story
+story = module1_dream_understanding.process(text)   # text -> Story
+```
+Right after this returns, a FastAPI `BackgroundTask` calls
+`module2_dream_graph.build_and_persist_graph(dream_id, user_id, story)` — persists
+characters/locations/emotions/events into SQLite and checks them against the same
+browser's past dreams (scoped via an anonymous `dream_user_id` cookie) for recurring
+totems. Fire-and-forget: runs *after* the response is sent, failures are caught and
+logged, never raised.
+
+**`/api/dream` — the full dream archaeology pipeline.** Modules 1 → 2 → 3 → 7, all
+synchronous, returning a `Story` that's actually built from the *reconstructed* narrative:
+```python
+story = module1.process(text)                              # text -> Story (used only as a title hint below)
+graph = await module2.build_and_persist_graph(...)          # Story -> DreamGraph
+narrative = NarrativeReconstructionEngine().reconstruct(...) # DreamGraph -> NarrativeOutput (prose beats)
+story = module7_screenplay_conversion.process(narrative, graph, title_hint=story.title)  # -> Story
+```
+Module 7 is the missing link that used to make Module 3's output a dead end: it turns
+each reconstructed narrative beat's *prose* into actual dialogue lines + sound cues,
+pulling character/location facts straight from the graph (authoritative, no need to ask
+an LLM to re-derive a name it already knows). The resulting `Story` is exactly the same
+shape Module 1 produces directly — feed it to `/api/audio` and Modules 8-10 don't know or
+care which path it came from.
+
+**Both paths converge on `/api/audio` — Modules 8 → 9 → 10** (unchanged either way):
+```python
 story = module8_audio_direction.process(story)            # Story -> Story (+emotion, +direction)
 story = module9_audio_production.process(story, tmp_dir)  # Story -> Story (+audio_path, +position_ms)
 final_path = module10_mixing_timeline.process(story, out) # Story -> Path (final mp3)
 ```
 
-**Module 2 runs alongside this, not inside it.** Right after `/api/story` returns (in
-`app.py`'s `create_story`), a FastAPI `BackgroundTask` calls
-`module2_dream_graph.build_and_persist_graph(dream_id, user_id, story)` — it persists
-characters/locations/emotions/events into SQLite and checks them against the same
-browser's past dreams (scoped via an anonymous `dream_user_id` cookie) for recurring
-totems. This is fire-and-forget: it runs *after* the HTTP response is already sent, and
-any failure is caught and logged, never raised — nothing downstream (Modules 8-10) reads
-the graph back today, so Module 2 breaking must never break the demo.
+Verified live end-to-end: `/api/dream` → `/api/audio` through the full 1→2→3→7→8→9→10
+chain produces a real playable mp3, not just individually-tested pieces.
 
 Text generation (Module 1 extraction, Module 8 direction) runs on **OpenAI** (`gpt-4o` by
 default), matching the architecture doc directly. Voice input transcription stays on
@@ -157,17 +177,88 @@ Other shared code (not module-specific, anyone can use):
   persistence path for future features (Module 4's Dream Layer Engine, Module 5's Ripple
   Regeneration) that would read the graph back. Today nothing does.
 
-### `module4_dream_layer_engine/`, `module5_ripple_regeneration/`, `module6_multi_lens_generation/`, `module11_qa_consistency/` — Stubs
-Each has a docstring explaining the intended design per Architecture.md and what it would
-depend on. `module6_multi_lens_generation` is the easiest one to pick up first (no
-dependency on the others); `module4_dream_layer_engine` is the architecture doc's own pick
-for highest-value "if you have time left" feature, and now that Module 2 is built, it's
-unblocked.
+### `module4_dream_layer_engine/` — Built
+- `layers.py` — `generate_layers(graph, session_meta, layer_names=None, model_tier="draft") -> DreamLayers`.
+  Not a separate model, per Architecture.md — an orchestration pattern: calls Module 3's
+  `NarrativeReconstructionEngine` once per layer (default 4: `conscious_dream`,
+  `subconscious_memory`, `hidden_fear`, `symbolic_truth`), each with a different
+  `config.layer_persona` string, all against the same `DreamGraph`. Runs in parallel via
+  `asyncio.gather` + `asyncio.to_thread` (Module 3's `.reconstruct()` is a sync/blocking
+  call, so it needs pushing off the event loop thread to actually run concurrently, not
+  serially).
+- `_cross_reference_totems` — cross-references Module 2's `is_recurring_symbol` nodes
+  against each layer's `provenance_map` so you can show "the red door totem appears in the
+  conscious_dream AND hidden_fear layers."
+- One bad layer's LLM call failing doesn't take down the others — collected per-layer into
+  `DreamLayers.errors`, not raised.
+- Endpoint: `POST /api/dream/layers`. Each layer's beats can be fed into Module 7 +
+  `/api/audio` independently, exactly like the default single narrative.
 
-### `module3_narrative_reconstruction/`, `module7_screenplay_conversion/` — Stubs (folded into Module 1)
-These exist as folders for structural completeness but their logic currently lives inside
-Module 1's single prompt. Module 2 (Dream Graph) exists now, so splitting these out to
-actually read/write it mid-generation is unblocked — just not done yet.
+### `module6_multi_lens_generation/` — Built
+- `lenses.py` — same orchestration pattern as Module 4, using `config.lens_persona`
+  instead: one parallel call per lens (default 5: `psychological`, `thriller`, `mystery`,
+  `fantasy`, `adventure`).
+- Endpoint: `POST /api/dream/lenses`.
+- Verified live: two lenses run on the same dream read genuinely differently (thriller
+  framed around escalating danger/urgency, fantasy around wonder and impossible imagery)
+  in ~15s total for both, confirming they're actually running concurrently, not serially.
+
+### `module5_ripple_regeneration/` — Built
+- `ripple.py` — `apply_edit(dream_id, node_id, new_label=None, new_attributes=None)` loads
+  the latest persisted graph (Module 2's `db.py`, already versioned by `dream_id`+
+  `version`), edits one node, persists it as a NEW version (old version untouched — purely
+  additive). `find_affected_beats(previous_narrative, changed_node_ids, changed_node_aliases)`
+  is pure Python, no LLM call, using Module 3's own `provenance_map` (`beat_id -> [node_ids]`)
+  to find which beats causally depend on the edited node — this is the "diff the graph,
+  find affected nodes" step from Architecture.md, and it's free because Module 3 already
+  tracked per-beat provenance when it first generated the narrative.
+- `regenerate(...)` builds a `RippleContext(previous_output, changed_node_ids)` and calls
+  Module 3's engine again — Module 3's own prompt (not duplicated here) instructs the model
+  to regenerate only the causally-affected beats and copy the rest through unchanged.
+  Re-runs Module 7 on the result so the response's `story` is immediately ready for
+  `/api/audio`.
+- **Real bug caught and fixed during testing**: Module 3's LLM doesn't reliably put node
+  *ids* in a beat's `characters_present` — it sometimes echoes the character's *name*
+  instead (confirmed live: a character with id `"1"` and name `"Sam"` showed up as
+  `"Sam"` in `characters_present`, not `"1"`). Matching only on id silently reported zero
+  affected beats after a rename. Fixed by also matching on the node's pre-edit label
+  (`changed_node_aliases`) — re-tested and confirmed 5 of 6 beats correctly flagged
+  affected after renaming a character who appears in 5 of the 6 beats.
+- Endpoint: `POST /api/dream/edit`. Stateless — the server doesn't persist `NarrativeOutput`
+  between requests, so the client sends back its own copy of `narrative_beats` from a prior
+  `/api/dream` (or `/api/dream/edit`) call, same pattern `/api/audio` uses for `Story`.
+
+### `module11_qa_consistency/` — Stub
+Docstring explains the intended design per Architecture.md. Lowest priority per the
+architecture doc's own build order — text-only reasoning pass over the finished
+screenplay + audio metadata, cheap to add once you want it.
+
+### `module3_narrative_reconstruction/` — Built
+- `engine.py` — `NarrativeReconstructionEngine`, the orchestrator: takes a `DreamGraph`,
+  builds the prompt, calls the LLM, post-processes into ordered `NarrativeBeat`s.
+- `llm_client.py` — thin OpenAI wrapper with a `mock_mode` that auto-activates when
+  `OPENAI_API_KEY` isn't set, so this module (and anything downstream) never hard-crashes
+  just because billing isn't wired up — returns canned-but-structurally-valid output instead.
+- `schemas.py` — pure dataclasses (`NarrativeOutput`, `NarrativeBeat`, `GapFill`,
+  `ReconstructionConfig`, etc.); re-exports Module 2's `DreamGraph`/`Node`/`Edge` types
+  rather than redefining them, so there's one canonical definition.
+- `prompts.py`, `postprocess.py`, `config.py` — prompt construction, contradiction
+  detection/provenance mapping, and default model tiers, respectively.
+- Public API: `NarrativeReconstructionEngine.input_from_graph(graph, session_meta, config)`
+  then `.reconstruct(input) -> NarrativeOutput`.
+- Output is prose beats, not the `Story` schema — Module 7 is what converts it into
+  something Modules 8-10 can voice.
+
+### `module7_screenplay_conversion/` — Built
+- `converter.py` — `convert_to_screenplay(narrative_output, graph, title_hint=None) -> Story`.
+  Character list comes straight from the `DreamGraph`'s character nodes (mechanical, no LLM
+  needed — the graph already has names/roles). One OpenAI call turns each beat's prose into
+  actual dialogue/narration lines + ambient/one-shot sound cues, using the same JSON-mode +
+  field-alias-normalization pattern as Module 1's `story_extraction.py`. Falls back to the
+  beat's own `characters_present`/first character if the model returns an invalid speaker id.
+- Public API: `process(narrative_output, graph, title_hint=None) -> Story`
+- This is the module that makes Module 3 not a dead end — without it, reconstructed
+  narrative beats had nowhere to go but a JSON response for display.
 
 ## Suggested ownership
 
@@ -176,6 +267,10 @@ actually read/write it mid-generation is unblocked — just not done yet.
 - **Person C:** `module9_audio_production/` — voice casting, prosody mapping, SFX synthesis quality
 - **Person D:** `module10_mixing_timeline/` + `app.py` (integration) + `frontend/`
 - **Person E:** `module2_dream_graph/` — graph schema, totem-matching quality/threshold tuning, and eventually extending Module 1's schema to extract actual objects/totems (currently the graph only has character/location nodes to match on — see that folder's section above)
+- **Person F:** `module3_narrative_reconstruction/` — reconstruction prompt quality, gap-fill confidence tuning
+- **Module 7** rides along with whoever owns Module 1 or the `app.py` integration — it's small and its quality depends on the same "does the JSON come back clean" skill as Module 1's extraction prompt
+- **Modules 4 and 6** ride along with whoever owns Module 3 — both are thin orchestration layers over the same engine (different persona strings), so their quality is really "how good are the layer/lens persona prompts in `layers.py`/`lenses.py`"
+- **Module 5** rides along with whoever owns Module 2 — its correctness depends on graph versioning (Module 2's `db.py`) and provenance data (Module 3's `postprocess.py`) more than on any prompt of its own
 
 Whoever owns `app.py` is the integration point — when two modules' contracts need to
 change together (e.g. a new `Story` field), that person coordinates the merge.

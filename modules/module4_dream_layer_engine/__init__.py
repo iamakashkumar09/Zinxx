@@ -1,21 +1,20 @@
-"""Module 4 — Dream Layer Engine (Inception-style). NOT IMPLEMENTED in this build.
+"""Module 4 — Dream Layer Engine (Inception-style).
 
-Per Architecture.md: organize the reconstructed narrative across layers (conscious dream /
-subconscious memory / hidden fear / symbolic truth) by running the narrative-reconstruction
-model multiple times with different system prompts, cross-referenced through the Dream
-Graph's totem nodes.
+Public API: process(graph, session_meta, layer_names=None, model_tier="draft") -> DreamLayers
 
-Why skipped: depends on Module 2 (Dream Graph) for totem tracking, which isn't built. This
-is explicitly called out in Architecture.md as the most defensible "innovation" surface if
-the team has time left after the core pipeline (Modules 1, 8, 9, 10) works end to end.
+Input: Module 2's DreamGraph. Output: a DreamLayers bundle — one Module 3 NarrativeOutput
+per layer (default: all 4 of conscious_dream / subconscious_memory / hidden_fear /
+symbolic_truth), generated in parallel, plus a cross-reference of which recurring totems
+appear in which layers.
 
-If you pick this up: this is the highest-value stretch feature per the architecture doc —
-cheap in API cost (pure prompt engineering) but a real differentiator for judges.
+Each layer is independently a valid Module 3 NarrativeOutput, so any of them can be fed
+into Module 7 (screenplay_conversion) exactly like the default single-layer narrative —
+e.g. `module7.process(layers.layers["hidden_fear"], graph)` gets you the audio-ready
+screenplay for just that layer.
 """
 
+from modules.module4_dream_layer_engine.layers import DreamLayers, LAYER_PERSONAS, generate_layers
 
-def process(*args, **kwargs):
-    raise NotImplementedError(
-        "Module 4 (Dream Layer Engine) is not implemented in this build. "
-        "See this module's docstring — it's the top recommended stretch goal."
-    )
+
+async def process(graph, session_meta, layer_names=None, model_tier: str = "draft") -> DreamLayers:
+    return await generate_layers(graph, session_meta, layer_names=layer_names, model_tier=model_tier)
