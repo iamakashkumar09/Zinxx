@@ -25,11 +25,17 @@ async def build_and_persist_graph(
     story: Story,
     version: int = 1,
 ) -> DreamGraph:
-    """The main entrypoint. Builds the typed graph, links recurring
-    totems, persists everything, and returns the finished graph."""
+    """The main entrypoint. Builds the typed graph, persists it, then links
+    recurring totems and backfills the match results.
+
+    Order matters here: link_recurring_symbols() calls store_node_embedding()
+    per node, which does an UPDATE against rows that persist_graph() writes —
+    it silently no-ops if those rows don't exist yet. persist_graph() must run
+    first so there's something to update.
+    """
     graph = await build_graph(dream_id, user_id, story, version)
-    graph = await link_recurring_symbols(graph)
     await persist_graph(graph)
+    graph = await link_recurring_symbols(graph)
     return graph
 
 

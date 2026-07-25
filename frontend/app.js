@@ -35,6 +35,8 @@ const playBtn = document.getElementById("play-btn");
 const seekInput = document.getElementById("seek");
 const timeCurrent = document.getElementById("time-current");
 const timeTotal = document.getElementById("time-total");
+const micBtn = document.getElementById("mic-btn");
+const micStatus = document.getElementById("mic-status");
 
 let characterColorMap = new Map();
 let characterNameMap = new Map();
@@ -53,6 +55,146 @@ SAMPLE_DREAMS.forEach((dream, i) => {
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
   statusEl.classList.toggle("error", isError);
+}
+
+/* ---------------------------------------------------------------- */
+/* Voice input — record a dream instead of typing it (Module 1)      */
+/* ---------------------------------------------------------------- */
+
+const MAX_RECORDING_SECONDS = 90;
+const MIME_CANDIDATES = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+
+function pickSupportedMimeType() {
+  if (typeof MediaRecorder === "undefined") return null;
+  return MIME_CANDIDATES.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+}
+
+function setMicStatus(message, cls) {
+  micStatus.textContent = message;
+  micStatus.className = "mic-status" + (cls ? ` ${cls}` : "");
+}
+
+function extensionFor(mimeType) {
+  if (mimeType.includes("webm")) return "webm";
+  if (mimeType.includes("ogg")) return "ogg";
+  if (mimeType.includes("mp4")) return "m4a";
+  return "webm";
+}
+
+const micSupported =
+  typeof navigator !== "undefined" &&
+  navigator.mediaDevices &&
+  typeof navigator.mediaDevices.getUserMedia === "function" &&
+  typeof MediaRecorder !== "undefined";
+
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingStream = null;
+let recordingTimerId = null;
+let recordingSeconds = 0;
+let micState = "idle"; // idle | recording | transcribing
+
+function formatSeconds(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function setMicState(state) {
+  micState = state;
+  micBtn.classList.toggle("recording", state === "recording");
+  micBtn.classList.toggle("transcribing", state === "transcribing");
+  micBtn.disabled = state === "transcribing";
+}
+
+async function startRecording() {
+  const mimeType = pickSupportedMimeType();
+  try {
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    setMicStatus("Microphone permission denied.", "error");
+    return;
+  }
+
+  recordedChunks = [];
+  mediaRecorder = mimeType
+    ? new MediaRecorder(recordingStream, { mimeType })
+    : new MediaRecorder(recordingStream);
+
+  mediaRecorder.addEventListener("dataavailable", (e) => {
+    if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+  });
+  mediaRecorder.addEventListener("stop", onRecordingStopped);
+
+  mediaRecorder.start();
+  setMicState("recording");
+  recordingSeconds = 0;
+  setMicStatus(`Recording... ${formatSeconds(recordingSeconds)} (tap to stop)`, "recording");
+
+  recordingTimerId = setInterval(() => {
+    recordingSeconds += 1;
+    setMicStatus(`Recording... ${formatSeconds(recordingSeconds)} (tap to stop)`, "recording");
+    if (recordingSeconds >= MAX_RECORDING_SECONDS) stopRecording();
+  }, 1000);
+}
+
+function stopRecording() {
+  if (recordingTimerId) {
+    clearInterval(recordingTimerId);
+    recordingTimerId = null;
+  }
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+  }
+  if (recordingStream) {
+    recordingStream.getTracks().forEach((track) => track.stop());
+    recordingStream = null;
+  }
+}
+
+async function onRecordingStopped() {
+  setMicState("transcribing");
+  setMicStatus("Transcribing...");
+
+  const mimeType = mediaRecorder.mimeType || "audio/webm";
+  const blob = new Blob(recordedChunks, { type: mimeType });
+
+  if (blob.size < 500) {
+    setMicState("idle");
+    setMicStatus("Recording was too short — try again.", "error");
+    return;
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append("file", blob, `recording.${extensionFor(mimeType)}`);
+    const res = await fetch("/api/transcribe", { method: "POST", body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Transcription failed.");
+    }
+    const { text } = await res.json();
+    if (!text) {
+      setMicStatus("Didn't catch that — try speaking again.", "error");
+    } else {
+      dreamInput.value = text;
+      setMicStatus("Transcribed — feel free to edit before generating.");
+    }
+  } catch (err) {
+    setMicStatus(err.message, "error");
+  } finally {
+    setMicState("idle");
+  }
+}
+
+if (micSupported) {
+  micBtn.addEventListener("click", () => {
+    if (micState === "idle") startRecording();
+    else if (micState === "recording") stopRecording();
+  });
+} else {
+  micBtn.hidden = true;
+  setMicStatus("Voice input isn't supported in this browser.");
 }
 
 function setStepState(name, state) {

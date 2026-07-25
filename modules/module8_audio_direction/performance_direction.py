@@ -3,14 +3,19 @@
 Generates a vocal performance instruction for each line, batched per scene, using the
 line text + emotion_scoring.py's output as signal. This is the "how should it sound"
 planning step that feeds directly into Module 9's (audio_production) TTS instructions.
+
+Uses OpenAI (same OPENAI_MODEL as Module 1) — Architecture.md notes a cheaper/faster model
+is "plenty" for this planning-over-structured-data task, but this build keeps it on the
+same model as extraction for simplicity; tune OPENAI_MODEL down here independently later
+if you want to save cost once quality is confirmed good enough.
 """
 
 import json
 import re
 
-from shared.config import GROQ_MODEL
-from shared.llm_client import get_client
+from shared.config import OPENAI_MODEL
 from shared.models import Story
+from shared.openai_client import get_client
 
 PROMPT_TEMPLATE = """You are a voice director for an audio drama. Below is one scene from the
 story "{title}", with its setting, emotional tone, and each line's text plus its emotion
@@ -65,7 +70,7 @@ def _directions_for_scene(title: str, scene) -> list[str]:
     for _attempt in range(2):
         try:
             completion = client.chat.completions.create(
-                model=GROQ_MODEL,
+                model=OPENAI_MODEL,
                 max_tokens=2048,
                 response_format={"type": "json_object"},
                 messages=[{"role": "user", "content": prompt}],

@@ -14,23 +14,32 @@ modules that are stubbed/not built):
 
 Each arrow is a real function call below — module N's return value is passed directly as
 module N+1's argument.
+
+Module 2 (Dream Graph) runs alongside this, off to the side: after /api/story returns,
+a background task persists the story into the SQLite-backed graph (characters, locations,
+emotions, recurring totems) for future cross-dream recognition. It's best-effort and
+non-blocking — nothing in the Module 1 -> 8 -> 9 -> 10 chain reads it back today, so a
+Module 2 failure must never slow down or break the actual demo path.
 """
 
 import json
 import shutil
 import uuid
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from modules import module1_dream_understanding as module1
+from modules import module2_dream_graph as module2
 from modules import module8_audio_direction as module8
 from modules import module9_audio_production as module9
 from modules import module10_mixing_timeline as module10
 from shared.config import EXAMPLES_DIR, FRONTEND_DIR, OUTPUT_DIR
 from shared.models import AudioRequest, AudioResponse, Story, StoryRequest
+
+USER_ID_COOKIE = "dream_user_id"
 
 app = FastAPI(title="Dream to Story")
 
@@ -45,20 +54,67 @@ app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
+@app.on_event("startup")
+async def _init_dream_graph_db():
+    await module2.init_db()
+
+
+def _get_or_set_user_id(request: Request, response: Response) -> str:
+    """Anonymous per-browser id (cookie) so Module 2 can scope totem-matching to
+    'this visitor', without needing real accounts/auth for a hackathon demo."""
+    user_id = request.cookies.get(USER_ID_COOKIE)
+    if not user_id:
+        user_id = uuid.uuid4().hex
+        response.set_cookie(USER_ID_COOKIE, user_id, max_age=60 * 60 * 24 * 365, httponly=True)
+    return user_id
+
+
+async def _persist_dream_graph(dream_id: str, user_id: str, story: Story) -> None:
+    """Best-effort side effect — must never surface as a user-facing failure."""
+    try:
+        await module2.build_and_persist_graph(dream_id=dream_id, user_id=user_id, story=story)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[module2_dream_graph] failed to persist graph for dream {dream_id}: {exc}")
+
+
 @app.get("/")
 def index():
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
-@app.post("/api/story", response_model=Story)
-def create_story(req: StoryRequest):
-    """Module 1 only — fast, so the UI can show the story before audio finishes."""
+@app.post("/api/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    """Optional voice input for Module 1 — record a dream instead of typing it."""
     try:
-        return module1.process(req.text)
+        audio_bytes = await file.read()
+        text = module1.transcribe(audio_bytes, file.filename or "recording.webm")
+        return {"text": text}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+
+
+@app.post("/api/story", response_model=Story)
+def create_story(req: StoryRequest, request: Request, response: Response, background_tasks: BackgroundTasks):
+    """Module 1 only — fast, so the UI can show the story before audio finishes.
+
+    Also fires off Module 2 (Dream Graph persistence) as a background task after the
+    story is ready — see _persist_dream_graph's docstring for why this must stay
+    non-blocking and best-effort.
+    """
+    try:
+        story = module1.process(req.text)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Story extraction failed: {exc}") from exc
+
+    user_id = _get_or_set_user_id(request, response)
+    dream_id = uuid.uuid4().hex
+    background_tasks.add_task(_persist_dream_graph, dream_id, user_id, story)
+
+    return story
 
 
 @app.post("/api/audio", response_model=AudioResponse)

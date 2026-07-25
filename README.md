@@ -6,9 +6,10 @@ timed sound effects, mixed into one final audio file.
 
 Built per `Dream-to-Story-Build-Spec.md`. Module boundaries follow
 `Dream-to-Story-Architecture.md` — see **[MODULES.md](MODULES.md)** for the full module
-map, ownership split, and what's built vs. stubbed. Pipeline: Groq (dream understanding,
+map, ownership split, and what's built vs. stubbed. Pipeline: OpenAI (dream understanding,
 audio direction) → HuggingFace emotion classifier → edge-tts (voices) → procedural
-numpy/scipy sound design → pydub (mix).
+numpy/scipy sound design → pydub (mix). Voice input (optional) transcribes via Groq's
+free-tier Whisper.
 
 ## 1. Setup
 
@@ -18,24 +19,26 @@ numpy/scipy sound design → pydub (mix).
 - **ffmpeg on PATH** — required by `pydub` for audio encode/decode/export.
   - Windows: `winget install ffmpeg` or `choco install ffmpeg`, then restart your terminal.
   - Verify with: `ffmpeg -version`
-- A Groq API key (free at console.groq.com/keys — used by Module 1 and Module 8).
-  edge-tts needs no key.
+- An OpenAI API key (platform.openai.com/api-keys — used by Module 1 and Module 8; this is
+  the quality-critical path so it's worth spending real budget here).
+- A Groq API key (free at console.groq.com/keys — used only for the optional mic/voice
+  input's transcription). edge-tts needs no key.
 
 ### Install
 
 ```powershell
 myenv\Scripts\pip install -r requirements.txt
 copy .env.example .env
-# then edit .env and set GROQ_API_KEY=gsk_...
+# then edit .env and set OPENAI_API_KEY=sk-... and GROQ_API_KEY=gsk_...
 ```
 
-`GROQ_MODEL` defaults to `llama-3.1-8b-instant` — chosen for its much higher free-tier
-daily quota (the larger `llama-3.3-70b-versatile` hits its 100k TPD cap fast once a few
-people on the team are testing against it). If you want higher quality and have quota
-budget left, swap in `llama-3.3-70b-versatile`. Run `client.models.list()` (see
-`shared/llm_client.py`) to see every model your key currently has access to — Groq's free
-tier quota is tracked **per model**, so switching models is the fastest way to get
-unblocked mid-demo if you hit a rate limit.
+`OPENAI_MODEL` defaults to `gpt-4o`. If you want to cut cost on the less quality-sensitive
+Module 8 (performance direction), you can point that call at a cheaper model independently
+— see the note in `modules/module8_audio_direction/performance_direction.py`.
+
+Module 2 (Dream Graph) needs no setup at all — it uses a local SQLite file
+(`output/dream_graph.db`, created automatically on first run) rather than a real database,
+so there's no `DREAM_DB_URL`/host/port/password to configure.
 
 ## 2. Run
 
@@ -46,9 +49,10 @@ myenv\Scripts\uvicorn app:app --reload --port 8000
 Open **http://localhost:8000** — the FastAPI app serves the frontend directly (no separate
 dev server needed).
 
-Flow: type a dream → **Generate** → story structure (title/characters/scenes) appears in a
-few seconds → voices/sound design/mixing runs → final mixed track appears in an `<audio>`
-player with a Download link.
+Flow: type a dream (or tap the mic button and speak it — transcribed via Groq Whisper) →
+**Generate** → story structure (title/characters/scenes) appears in a few seconds →
+voices/sound design/mixing runs → final mixed track appears in an `<audio>` player with a
+Download link.
 
 ## 3. Test story extraction in isolation
 
@@ -81,17 +85,18 @@ app.py                        Integration entrypoint — wires modules together,
 shared/
   models.py                   Story/Scene/Line/SoundCue — the contract every module reads/writes
   config.py                   env vars + shared mixing constants
-  llm_client.py               shared Groq client factory (used by Module 1 and Module 8)
+  openai_client.py            shared OpenAI client factory (used by Module 1 and Module 8)
+  llm_client.py                shared Groq client factory (used only by Module 1's voice transcription)
 modules/
-  module1_dream_understanding/   BUILT  — Groq call, raw text -> structured Story
-  module2_dream_graph/           stub   — not implemented
+  module1_dream_understanding/   BUILT  — OpenAI call, raw text -> structured Story (+ optional voice input via Groq Whisper)
+  module2_dream_graph/           BUILT  — SQLite graph + OpenAI embeddings, runs as a background side-effect after /api/story
   module3_narrative_reconstruction/ stub — folded into Module 1
   module4_dream_layer_engine/    stub   — not implemented
   module5_ripple_regeneration/   stub   — not implemented
   module6_multi_lens_generation/ stub   — not implemented
   module7_screenplay_conversion/ stub   — folded into Module 1
-  module8_audio_direction/       BUILT  — emotion scoring + Groq performance direction
-  module9_audio_production/      BUILT  — edge-tts voices + procedural SFX + cue timing
+  module8_audio_direction/       BUILT  — emotion scoring + OpenAI performance direction
+  module9_audio_production/      BUILT  — edge-tts voices + mood-driven procedural SFX/BGM + cue timing
   module10_mixing_timeline/      BUILT  — pydub mixing, final mp3 export
   module11_qa_consistency/       stub   — not implemented
 frontend/
@@ -111,21 +116,37 @@ input, and where the not-yet-built modules would plug in if your team has time f
 
 - **Ambience "ducking"** is a fixed low-gain underlay (-20dB) rather than true sidechain
   compression — simpler and good enough for a short demo track; documented in `mixing.py`.
-- **Sound effects are procedurally synthesized**, not sampled — this keeps the whole stack
-  free-tier/offline-capable per the spec's non-functional requirements, at the cost of
-  some realism (e.g. "footstep" is a shaped low-pass thud, not a real recording).
+- **Sound effects and background music are procedurally synthesized**, not sampled — this
+  keeps the whole stack free-tier/offline-capable per the spec's non-functional
+  requirements, at the cost of some realism (e.g. "footstep" is a shaped low-pass thud, not
+  a real recording). Both are mood-aware: `modules/module9_audio_production/mood.py` maps
+  each scene's `emotional_tone` to musical parameters (root note, major/minor/dissonant
+  interval, brightness, tremolo, distortion) that shape both the ambience texture
+  (`sfx_synth.py`) and a dedicated BGM chord pad generated per scene (`music_synth.py`) —
+  so a "furious" scene actually sounds tense/aggressive and a "peaceful" one sounds warm,
+  rather than every scene defaulting to the same generic noise bed.
+- Voice delivery prosody (rate/pitch) is driven by the same emotion scores, with an
+  intensity floor so even a moderately-confident emotion reads clearly instead of fading
+  toward neutral — see the note in `voice_generation.py`.
 - **Two-phase API** (`/api/story` then `/api/audio`) lets the UI show the extracted story
   immediately while the slower audio stage (TTS + SFX + mixing) runs, per the spec's UX
   requirement.
 - Each character gets a consistent voice from a small pool of `edge-tts` neural voices,
   assigned in first-seen order.
-- Modules 2-7 (Dream Graph, Dream Layer Engine, Ripple Regeneration, Multi-Lens, etc.) are
-  the stretch-goal features from `Dream-to-Story-Architecture.md` — not built, but stubbed
-  with clear docstrings in `modules/` for whoever wants to pick one up.
+- Modules 4-7, 11 (Dream Layer Engine, Ripple Regeneration, Multi-Lens, etc.) are the
+  remaining stretch-goal features from `Dream-to-Story-Architecture.md` — not built, but
+  stubbed with clear docstrings in `modules/` for whoever wants to pick one up. Module 2
+  (Dream Graph) **is** built — it persists every generated story into a local SQLite
+  database (`output/dream_graph.db`, auto-created, no setup) and recognizes recurring
+  characters/locations across a browser session via OpenAI embeddings, but nothing reads
+  it back yet (no Dream Layer Engine or Ripple Regeneration consuming it), so it runs
+  purely as a background side-effect and never affects what you hear.
 
 ## 7. Troubleshooting
 
-- **"GROQ_API_KEY is not set"** — copy `.env.example` to `.env` and fill in the key.
+- **"OPENAI_API_KEY is not set"** — copy `.env.example` to `.env` and fill in the key.
+- **"GROQ_API_KEY is not set"** (only affects the mic/voice-input button) — same fix, this
+  key is separate from `OPENAI_API_KEY` and only used by `transcription.py`.
 - **pydub / ffmpeg errors on export** — confirm `ffmpeg -version` works in the same shell
   you're running uvicorn from.
 - **First request is slow** — the HuggingFace emotion model downloads on first use

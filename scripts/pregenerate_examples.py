@@ -1,6 +1,6 @@
 """Pre-generate 2-3 polished example outputs for a demo-safe fallback.
 
-Run this once (with GROQ_API_KEY set and internet access) before a live demo:
+Run this once (with OPENAI_API_KEY and GROQ_API_KEY set, and internet access) before a live demo:
     python scripts/pregenerate_examples.py
 
 Writes audio + a manifest JSON (story + audio_url) per example into output/examples/,

@@ -18,12 +18,10 @@ user's subconscious is doing something it isn't.
 
 from __future__ import annotations
 
-from openai import AsyncOpenAI
-
+from shared.openai_client import get_async_client
 from .db import find_nearest_node_embedding, store_node_embedding
 from .models import DreamGraph, Node, NodeType
 
-_client = AsyncOpenAI()
 _EMBED_MODEL = "text-embedding-3-small"
 _MATCH_THRESHOLD = 0.86  # cosine similarity; tune once you have real data
 
@@ -62,5 +60,5 @@ async def link_recurring_symbols(graph: DreamGraph) -> DreamGraph:
 
 async def _embed_node(node: Node) -> list[float]:
     text = f"{node.label}: {node.attributes.get('description', '')}".strip()
-    resp = await _client.embeddings.create(model=_EMBED_MODEL, input=text)
+    resp = await get_async_client().embeddings.create(model=_EMBED_MODEL, input=text)
     return resp.data[0].embedding

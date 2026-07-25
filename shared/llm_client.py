@@ -1,6 +1,7 @@
-"""Shared Groq client factory — used by Module 1 (story_intelligence) and Module 2
-(audio_direction), both of which make Groq chat-completion calls. Lives in shared/ so
-neither module depends on the other's internals.
+"""Shared Groq client factory. Chat-completion calls (Module 1 extraction, Module 8
+performance direction) run on OpenAI now — see shared/openai_client.py. This client is
+kept for Module 1's optional voice transcription (module1_dream_understanding/
+transcription.py), which uses Groq's free-tier hosted Whisper.
 """
 
 from groq import Groq

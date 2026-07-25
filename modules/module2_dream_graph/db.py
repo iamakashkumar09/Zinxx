@@ -1,5 +1,5 @@
 """
-Module 2 — Postgres + pgvector persistence.
+Module 2 — SQLite persistence.
 
 Public contract:
 
@@ -8,34 +8,32 @@ Public contract:
     await find_nearest_node_embedding(user_id, embedding, node_type, exclude_dream_id) -> NearestMatch | None
     await store_node_embedding(user_id, dream_id, version, node, embedding) -> None
 
-Requires the pgvector extension: `CREATE EXTENSION IF NOT EXISTS vector;`
-and the `pgvector` python package (`pip install pgvector`).
+Local SQLite file — no server, no URL/port/password to configure. Embeddings are stored
+as a JSON list of floats (SQLite has no native vector type/index), and cosine similarity
+is computed in Python with numpy over the small number of past nodes any one user will
+realistically have at hackathon scale. If this ever needs to scale past a few thousand
+embedded nodes per user, swap this file for a real vector store — the rest of the module
+(builder.py, totems.py, models.py) doesn't know or care how persistence works underneath.
 """
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from pgvector.sqlalchemy import Vector
+import numpy as np
 from pydantic import BaseModel
-from sqlalchemy import Column, DateTime, Float, Integer, String, select
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
+from shared.config import DREAM_DB_URL
 from .models import DreamGraph, Edge, Node, NodeType
 
 Base = declarative_base()
 
-DATABASE_URL = os.environ.get(
-    "DREAM_DB_URL", "postgresql+asyncpg://localhost/dream_archaeology"
-)
-_engine = create_async_engine(DATABASE_URL, echo=False)
+_engine = create_async_engine(DREAM_DB_URL, echo=False)
 _Session = async_sessionmaker(_engine, expire_on_commit=False)
-
-_EMBED_DIM = 1536  # text-embedding-3-small
 
 
 class GraphNodeRow(Base):
@@ -48,11 +46,11 @@ class GraphNodeRow(Base):
     node_id = Column(String, nullable=False)
     type = Column(String, nullable=False)
     label = Column(String, nullable=False)
-    attributes = Column(JSONB, nullable=False, default=dict)
+    attributes = Column(JSON, nullable=False, default=dict)
     is_recurring_symbol = Column(Integer, nullable=False, default=0)  # bool as 0/1
     matched_totem_id = Column(String, nullable=True)
     matched_totem_similarity = Column(Float, nullable=True)
-    embedding = Column(Vector(_EMBED_DIM), nullable=True)
+    embedding = Column(JSON, nullable=True)  # list[float], compared in Python — see find_nearest_node_embedding
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -67,12 +65,11 @@ class GraphEdgeRow(Base):
     to_id = Column(String, nullable=False)
     type = Column(String, nullable=False)
     weight = Column(Float, nullable=False, default=1.0)
-    metadata_ = Column("metadata", JSONB, nullable=False, default=dict)
+    metadata_ = Column("metadata", JSON, nullable=False, default=dict)
 
 
 async def init_db() -> None:
     async with _engine.begin() as conn:
-        await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector;")
         await conn.run_sync(Base.metadata.create_all)
 
 
@@ -176,10 +173,17 @@ class NearestMatch(BaseModel):
 async def store_node_embedding(
     user_id: str, dream_id: str, version: int, node: Node, embedding: list[float]
 ) -> None:
-    """Backfills the embedding column on the row persist_graph already wrote.
-    Call this right after persist_graph, or fold it into persist_graph if
-    you'd rather embed everything up front — kept separate here so totem
-    embedding failures don't block the rest of the graph from saving."""
+    """Backfills the embedding column, plus whatever totem-match result
+    link_recurring_symbols already computed on `node` (is_recurring_symbol,
+    matched_totem_id, matched_totem_similarity) on the row persist_graph
+    already wrote. Call this right after persist_graph, or fold it into
+    persist_graph if you'd rather embed everything up front — kept separate
+    here so totem embedding failures don't block the rest of the graph from
+    saving.
+
+    Requires the row to already exist (persist_graph must run first) — this
+    is an UPDATE, not an upsert, and silently no-ops otherwise.
+    """
     async with _Session() as s:
         stmt = select(GraphNodeRow).where(
             GraphNodeRow.dream_id == dream_id,
@@ -189,6 +193,9 @@ async def store_node_embedding(
         row = (await s.execute(stmt)).scalar_one_or_none()
         if row:
             row.embedding = embedding
+            row.is_recurring_symbol = int(node.is_recurring_symbol)
+            row.matched_totem_id = node.matched_totem_id
+            row.matched_totem_similarity = node.matched_totem_similarity
             await s.commit()
 
 
@@ -199,27 +206,40 @@ async def find_nearest_node_embedding(
     exclude_dream_id: str,
 ) -> Optional[NearestMatch]:
     """Cosine-similarity search over this user's past node embeddings only —
-    totem matching is scoped per-user, never across users."""
+    totem matching is scoped per-user, never across users.
+
+    No vector index here (SQLite has none built in) — pulls every candidate
+    embedding for this user+node_type and ranks in Python. Fine at hackathon
+    scale (a handful of dreams per user); revisit if that ever changes.
+    """
     async with _Session() as s:
-        stmt = (
-            select(
-                GraphNodeRow.node_id,
-                GraphNodeRow.dream_id,
-                GraphNodeRow.embedding.cosine_distance(embedding).label("distance"),
-            )
-            .where(
-                GraphNodeRow.user_id == user_id,
-                GraphNodeRow.type == node_type.value,
-                GraphNodeRow.dream_id != exclude_dream_id,
-                GraphNodeRow.embedding.isnot(None),
-            )
-            .order_by("distance")
-            .limit(1)
+        stmt = select(
+            GraphNodeRow.node_id, GraphNodeRow.dream_id, GraphNodeRow.embedding
+        ).where(
+            GraphNodeRow.user_id == user_id,
+            GraphNodeRow.type == node_type.value,
+            GraphNodeRow.dream_id != exclude_dream_id,
+            GraphNodeRow.embedding.isnot(None),
         )
-        row = (await s.execute(stmt)).first()
-        if row is None:
+        rows = (await s.execute(stmt)).all()
+        if not rows:
             return None
-        node_id, matched_dream_id, distance = row
-        return NearestMatch(
-            node_id=node_id, dream_id=matched_dream_id, similarity=1 - distance
-        )
+
+        query_vec = np.asarray(embedding, dtype=float)
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm == 0:
+            return None
+
+        best: Optional[NearestMatch] = None
+        for node_id, matched_dream_id, stored_embedding in rows:
+            if not stored_embedding:
+                continue
+            candidate = np.asarray(stored_embedding, dtype=float)
+            candidate_norm = np.linalg.norm(candidate)
+            if candidate_norm == 0:
+                continue
+            similarity = float(np.dot(query_vec, candidate) / (query_norm * candidate_norm))
+            if best is None or similarity > best.similarity:
+                best = NearestMatch(node_id=node_id, dream_id=matched_dream_id, similarity=similarity)
+
+        return best

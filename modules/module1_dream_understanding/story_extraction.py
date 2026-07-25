@@ -1,20 +1,21 @@
 """Module 1 — Dream Understanding & Conversational Recovery.
 
 Also covers Architecture.md Modules 3 (Narrative Reconstruction),
-and 7 (Screenplay Conversion) collapsed into a single Groq call: raw dream/memory text in,
+and 7 (Screenplay Conversion) collapsed into a single OpenAI call: raw dream/memory text in,
 a fully structured Story (title, characters, scenes, lines, sound cues) out. No conversational
 follow-up loop and no persistent Dream Graph in this build — everything happens in one pass.
 
-Uses Groq (Llama 3.3 70B) instead of OpenAI, with JSON mode + a normalization pass since
-Llama is looser about exact field names than larger models.
+Uses OpenAI (gpt-4o by default — this is the quality-critical baseline every other module
+builds on) with JSON mode. The normalization pass below is kept as cheap insurance even
+though gpt-4o is reliable about field names — costs nothing when there's nothing to fix.
 """
 
 import json
 import re
 
-from shared.config import GROQ_MODEL
-from shared.llm_client import get_client
+from shared.config import OPENAI_MODEL
 from shared.models import Story
+from shared.openai_client import get_client
 
 PROMPT_TEMPLATE = """You are adapting a real dream or memory, described informally by a user, into a short
 cinematic audio drama script. The input may be non-linear, vague, or fragmented — that is
@@ -72,7 +73,7 @@ _CUE_PROMPT_ALIASES = ("prompt", "cue", "description", "sound", "sfx", "effect")
 
 
 def _normalize(data: dict) -> dict:
-    """Tolerate common field-naming drift from smaller/faster models (e.g. Llama via Groq)."""
+    """Tolerate common field-naming drift from the model — cheap insurance regardless of provider."""
     for i, scene in enumerate(data.get("scenes") or [], start=1):
         if not isinstance(scene, dict):
             continue
@@ -102,7 +103,7 @@ def _extract_json(raw: str) -> dict:
 def _call_llm(raw_input: str) -> str:
     client = get_client()
     completion = client.chat.completions.create(
-        model=GROQ_MODEL,
+        model=OPENAI_MODEL,
         max_tokens=4096,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": PROMPT_TEMPLATE.format(raw_input=raw_input)}],

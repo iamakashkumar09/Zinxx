@@ -87,7 +87,10 @@ async def build_graph(
             # Verify character exists
             if any(char.id == speaker_id for char in story.characters):
                 edges.append(_edge(speaker_id, event_id, EdgeType.appears_in))
-                edges.append(_edge(speaker_id, emo_id, EdgeType.feels))
+                # disambiguated by event_id: the same character can feel the same
+                # recurring emotional_tone in a different scene — without this,
+                # both edges would collide on the same id (same speaker/emotion pair).
+                edges.append(_edge(speaker_id, emo_id, EdgeType.feels, disambiguator=event_id))
 
     # 3. happens_before chain between consecutive events
     ordered_scenes = sorted(story.scenes, key=lambda s: s.id)
@@ -101,5 +104,8 @@ async def build_graph(
     )
 
 
-def _edge(from_id: str, to_id: str, type_: EdgeType) -> Edge:
-    return Edge(id=f"{from_id}->{to_id}:{type_.value}", from_id=from_id, to_id=to_id, type=type_)
+def _edge(from_id: str, to_id: str, type_: EdgeType, disambiguator: str = "") -> Edge:
+    suffix = f"@{disambiguator}" if disambiguator else ""
+    return Edge(
+        id=f"{from_id}->{to_id}:{type_.value}{suffix}", from_id=from_id, to_id=to_id, type=type_
+    )
