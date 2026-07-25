@@ -328,6 +328,26 @@ export default function DreamToStoryApp() {
     };
   };
 
+  const mergeSpeechPiece = (prev: string, next: string): string => {
+    if (!prev) return next;
+    if (!next) return prev;
+    const pLower = prev.trim().toLowerCase();
+    const nLower = next.trim().toLowerCase();
+    if (pLower.endsWith(nLower)) return prev.trim();
+    if (nLower.startsWith(pLower)) return next.trim();
+
+    const prevWords = prev.trim().split(/\s+/);
+    const nextWords = next.trim().split(/\s+/);
+    for (let overlap = Math.min(prevWords.length, nextWords.length); overlap > 0; overlap--) {
+      const endSlice = prevWords.slice(-overlap).join(" ").toLowerCase();
+      const startSlice = nextWords.slice(0, overlap).join(" ").toLowerCase();
+      if (endSlice === startSlice) {
+        return prevWords.slice(0, -overlap).concat(nextWords).join(" ");
+      }
+    }
+    return prev.trim() + " " + next.trim();
+  };
+
   const toggleVoiceInput = (target: 'main' | 'followup') => {
     if (isListening && activeVoiceTarget === target) {
       if (recognitionRef.current) {
@@ -368,12 +388,13 @@ export default function DreamToStoryApp() {
       recognition.onresult = (event: any) => {
         let currentSessionTranscript = '';
         for (let i = 0; i < event.results.length; ++i) {
-          currentSessionTranscript += event.results[i][0].transcript;
+          const piece = event.results[i][0].transcript;
+          currentSessionTranscript = mergeSpeechPiece(currentSessionTranscript, piece);
         }
 
         const cleanText = currentSessionTranscript.trim();
         if (cleanText) {
-          const fullText = basePrefix + cleanText;
+          const fullText = mergeSpeechPiece(basePrefix, cleanText);
           if (target === 'main') {
             setInputText(fullText);
             if (textareaRef.current) handleInput(null, textareaRef);
