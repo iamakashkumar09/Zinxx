@@ -15,6 +15,7 @@ export default function DreamToStoryApp() {
   const [savedDreams, setSavedDreams] = useState<any[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [vaultFilter, setVaultFilter] = useState<string>('all');
+  const [isLoadingVault, setIsLoadingVault] = useState<boolean>(false);
 
   const [inputText, setInputText] = useState<string>("");
   const [selectedLens, setSelectedLens] = useState<string>('psychological');
@@ -102,13 +103,16 @@ export default function DreamToStoryApp() {
   };
 
   const loadDreamsFromDB = async (userId: string) => {
+    setIsLoadingVault(true);
     try {
       const data = await getDreams(userId);
-      if (data && Array.isArray(data) && data.length > 0) {
+      if (data && Array.isArray(data)) {
         setSavedDreams(data);
       }
     } catch (err) {
       console.warn("Could not fetch from DB, using local state fallback:", err);
+    } finally {
+      setIsLoadingVault(false);
     }
   };
 
@@ -117,6 +121,10 @@ export default function DreamToStoryApp() {
     localStorage.setItem('dream_arc_view', newView);
     if (typeof window !== 'undefined') {
       window.history.pushState({ view: newView }, '', '');
+    }
+    // Refresh dreams from DB every time user opens the Vault
+    if (newView === 'library' && user) {
+      loadDreamsFromDB((user as any).id);
     }
     setIsTransitioningView(true);
     setTimeout(() => {
@@ -181,15 +189,19 @@ export default function DreamToStoryApp() {
 
   const handleSaveToVault = async (text: string, resultData: any, lens: string) => {
     if (!user) return;
-    const newDream = { id: Date.now().toString(), userId: (user as any).id, inputText: text, storyData: resultData, lens, createdAt: Date.now() };
+    const userId = (user as any).id;
+    const newDream = { id: Date.now().toString(), userId, inputText: text, storyData: resultData, lens, createdAt: Date.now() };
     setSavedDreams(prev => [newDream, ...prev]);
-    try {
-      const saved = await saveDream((user as any).id, text, resultData, lens);
-      if (saved && saved.id) {
-        setSavedDreams(prev => prev.map((d: any) => d.id === newDream.id ? saved : d));
+    // Only save to DB if user has a real DB ID (cuid), not a local fallback usr_ ID
+    if (userId && !userId.startsWith('usr_')) {
+      try {
+        const saved = await saveDream(userId, text, resultData, lens);
+        if (saved && saved.id) {
+          setSavedDreams(prev => prev.map((d: any) => d.id === newDream.id ? saved : d));
+        }
+      } catch (err) {
+        console.warn("Could not save to DB (using local state fallback):", err);
       }
-    } catch (err) {
-      console.warn("Could not save to DB (using local state fallback):", err);
     }
   };
 
@@ -307,6 +319,9 @@ export default function DreamToStoryApp() {
     }
 
     try {
+      const initialText = target === 'main' ? (textareaRef.current?.value || inputText) : (followUpRef.current?.value || followUpAnswer);
+      const basePrefix = initialText.endsWith(' ') || initialText.length === 0 ? initialText : initialText + ' ';
+
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
@@ -318,30 +333,19 @@ export default function DreamToStoryApp() {
       };
 
       recognition.onresult = (event: any) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
+        let currentSessionTranscript = '';
+        for (let i = 0; i < event.results.length; ++i) {
+          currentSessionTranscript += event.results[i][0].transcript;
         }
 
-        if (finalTranscript || interimTranscript) {
-          const newText = finalTranscript || interimTranscript;
+        const cleanText = currentSessionTranscript.trim();
+        if (cleanText) {
+          const fullText = basePrefix + cleanText;
           if (target === 'main') {
-            setInputText(prev => {
-              const base = prev.endsWith(' ') || prev.length === 0 ? prev : prev + ' ';
-              return base + newText;
-            });
+            setInputText(fullText);
             if (textareaRef.current) handleInput(null, textareaRef);
           } else if (target === 'followup') {
-            setFollowUpAnswer(prev => {
-              const base = prev.endsWith(' ') || prev.length === 0 ? prev : prev + ' ';
-              return base + newText;
-            });
+            setFollowUpAnswer(fullText);
             if (followUpRef.current) handleInput(null, followUpRef);
           }
         }
@@ -349,8 +353,9 @@ export default function DreamToStoryApp() {
 
       recognition.onerror = (event: any) => {
         console.warn("Speech recognition error:", event.error);
-        if (event.error === 'network' || event.error === 'service-not-allowed' || event.error === 'not-allowed' || event.error === 'aborted') {
-          console.info("Switching to AI Voice Simulation Fallback due to browser network/service restriction...");
+        if (['network', 'service-not-allowed', 'not-allowed', 'audio-capture', 'language-not-supported', 'aborted'].includes(event.error)) {
+          console.info("Switching to AI Voice Simulation Fallback due to browser restriction/error...");
+          recognition.onend = null;
           simulateVoiceInput(target);
         } else if (event.error !== 'no-speech') {
           setIsListening(false);
@@ -568,7 +573,12 @@ export default function DreamToStoryApp() {
                 )}
               </div>
 
-              {savedDreams.length === 0 ? (
+              {isLoadingVault ? (
+                <div className="text-center py-32 flex flex-col items-center justify-center">
+                  <div className="w-12 h-12 rounded-full border-2 border-indigo-500/30 border-t-indigo-400 animate-spin mx-auto mb-6" />
+                  <p className="text-sm text-slate-500 animate-pulse">Loading your memories from the vault...</p>
+                </div>
+              ) : savedDreams.length === 0 ? (
                 <div className="text-center py-32 border border-dashed border-white/10 rounded-[2rem] bg-white/[0.01] backdrop-blur-sm">
                   <Compass className="w-12 h-12 text-slate-600 mx-auto mb-6 opacity-50" />
                   <h3 className="text-xl font-medium text-slate-300 mb-2">The vault is empty</h3>
@@ -970,11 +980,11 @@ export default function DreamToStoryApp() {
         </main>
       </div>
 
-      {/* TRULY FIXED Floating Add Story Button - Placed at root so it never moves on scroll */}
-      {view === 'library' && (
+      {/* TRULY FIXED Floating Button - Placed at root so it never moves on scroll */}
+      {(view === 'library' || (view === 'studio' && status !== 'idle' && status !== 'extracting')) && (
         <div className="fixed bottom-8 right-8 z-[100] pointer-events-auto animate-in fade-in slide-in-from-bottom-6 duration-700">
           <button
-            onClick={() => handleViewChange('studio')}
+            onClick={() => handleViewChange(view === 'library' ? 'studio' : 'library')}
             className="group relative inline-flex items-center space-x-3 px-6 py-3.5 rounded-full bg-gradient-to-r from-indigo-500 via-indigo-600 to-fuchsia-600 text-white font-semibold text-sm shadow-[0_10px_30px_rgba(79,70,229,0.5)] hover:shadow-[0_15px_40px_rgba(232,121,249,0.7)] border border-indigo-300/30 hover:scale-105 active:scale-95 transition-all duration-300 cursor-pointer overflow-hidden"
           >
             <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]" />
