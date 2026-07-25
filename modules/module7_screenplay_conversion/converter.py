@@ -34,11 +34,28 @@ Beats (in order):
 {beats_json}
 
 For each beat, produce:
-- "lines": 1-4 short spoken lines, each attributed to a character id from the cast above
+- "lines": 0-4 short spoken lines, each attributed to a character id from the cast above
   (use the narrator/first-person character for internal narration). Keep lines natural and
   short — this will be read aloud by a TTS voice. Stay faithful to the beat's narrative_text;
   don't invent plot beyond what's described.
-- "sound_cues": ambient + one-shot sound effects implied by the beat's setting or action.
+  * A line's "text" must be ONLY the actual words spoken or narrated aloud — real, quotable
+    speech. NEVER put a stage direction, action description, or parenthetical like
+    "(silent, watching)" or "(a low growl)" into "text" — a TTS voice will read it verbatim
+    and it will sound broken. If a character in this beat doesn't actually speak or narrate
+    (an animal, a crowd, a silent presence), give them NO line at all — express what they're
+    doing through a sound_cue instead (e.g. a low growl, footsteps, murmuring voices), not a
+    fake quote.
+  * It is fine, and occasionally correct, for a beat to have zero lines when nothing is
+    actually said — but this must be the exception, not the rule. This is an audio drama:
+    most beats need SOME first-person narration from the narrator/dreamer character
+    describing what's happening, even if no other character speaks. Do not leave every
+    beat silent just because no one else in the scene talks — the dreamer is always there
+    and can always narrate.
+- "sound_cues": ambient + one-shot sound effects implied by the beat's setting or action. Be
+  thorough and literal here — pull out every concrete sound event actually described or implied
+  in the beat's narrative_text (thunder, rain, an animal's cry, footsteps, a door, glass, a
+  bell, a crowd's murmur, fire crackling, etc.), not just a generic ambience bed for the
+  setting. This is the primary channel for anything non-human or non-verbal in the scene.
   Every "one-shot" cue needs a short "position" hint like "before line 1" or "after line 2".
 
 Return only valid JSON of the form:
@@ -74,6 +91,63 @@ def _extract_json(raw: str) -> dict:
 
 
 _CUE_PROMPT_ALIASES = ("prompt", "cue", "description", "sound", "sfx", "effect")
+
+_KEYWORD_RE = re.compile(r"[a-zA-Z]{4,}")
+_STOPWORDS = {"with", "from", "that", "this", "then", "them", "into", "onto", "over", "near", "some"}
+
+
+def _keywords(text: str) -> set[str]:
+    return {w.lower() for w in _KEYWORD_RE.findall(text)} - _STOPWORDS
+
+
+def _ensure_sound_coverage(scenes: list[Scene], graph: DreamGraph) -> None:
+    """Belt-and-suspenders pass: narrative reconstruction is generative and can drop a
+    concrete sound event even when explicitly instructed to preserve it (confirmed by
+    testing — the same source dream sometimes keeps every sound, sometimes drops several).
+    This mechanically checks every sound Module 1 originally captured against what actually
+    made it into the final sound_cues, and backfills anything missing as an ambient cue on
+    the scene sharing that event's original setting, so nothing is silently lost."""
+    all_cue_keywords = [_keywords(cue.prompt) for scene in scenes for cue in scene.sound_cues]
+
+    for event in graph.nodes_by_type(NodeType.event):
+        sources = [s.strip() for s in event.attributes.get("sound_sources", "").split(";") if s.strip()]
+        if not sources:
+            continue
+        location = event.attributes.get("location", "")
+        candidates = [s for s in scenes if s.setting == location] or scenes
+        for source in sources:
+            source_kw = _keywords(source)
+            if not source_kw:
+                continue
+            if any(source_kw & existing for existing in all_cue_keywords):
+                continue
+            target = candidates[0]
+            target.sound_cues.append(SoundCue(type="ambient", prompt=source))
+            all_cue_keywords.append(source_kw)
+
+
+def _fallback_narrator_id(characters: list[Character]) -> str | None:
+    for c in characters:
+        if c.id == "narrator" or "narrat" in c.role.lower() or "dreamer" in c.role.lower():
+            return c.id
+    return characters[0].id if characters else None
+
+
+def _ensure_narration(scenes: list[Scene], beats, narrator_id: str | None) -> None:
+    """Guards against the LLM giving every beat zero lines — confirmed to happen in testing,
+    and previously a hard pipeline failure ("no dialogue lines in any scene") with no
+    fallback, since allowing individual lineless beats (for non-speaking presences) opened
+    the door to the LLM leaving the WHOLE story silent. If that happens, fall back to a
+    short first-person narration line per scene straight from the beat's own prose — the
+    user always gets a playable result instead of an outright error."""
+    if any(s.lines for s in scenes) or not narrator_id:
+        return
+    for scene, beat in zip(scenes, beats):
+        text = beat.narrative_text.strip()
+        if len(text) > 200:
+            text = text[:197].rsplit(" ", 1)[0] + "..."
+        if text:
+            scene.lines.append(Line(speaker=narrator_id, text=text))
 
 
 def _normalize_cue(cue: dict) -> dict:
@@ -166,8 +240,12 @@ def convert_to_screenplay(
                     )
                 )
 
+            _ensure_narration(scenes, narrative.beats, _fallback_narrator_id(characters))
+
             if not any(s.lines for s in scenes):
                 raise ValueError("Screenplay conversion produced no dialogue lines in any scene.")
+
+            _ensure_sound_coverage(scenes, graph)
 
             return Story(
                 title=data.get("title") or title_hint or "Untitled Dream",

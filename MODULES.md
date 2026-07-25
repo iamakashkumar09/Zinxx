@@ -18,10 +18,12 @@ what's built, what talks to what, and where to plug in what isn't built yet.
 | 8 | `module8_audio_direction/` | Audio Direction Engine | **Built** (OpenAI + local HF classifier) |
 | 9 | `module9_audio_production/` | Audio Production | **Built** (edge-tts + procedural SFX) |
 | 10 | `module10_mixing_timeline/` | Mixing & Timeline Composition | **Built** (pydub) |
-| 11 | `module11_qa_consistency/` | Quality/Consistency Review | Stub — not implemented |
+| 11 | `module11_qa_consistency/` | Quality/Consistency Review | **Built** (OpenAI, advisory-only) — runs inside `/api/audio` between Modules 9 and 10 |
 
-Module 11 is the only remaining stub — its `__init__.py` explains why it's skipped and
-where it would plug in per Architecture.md's own build-priority order.
+All 11 modules from Architecture.md are built. Modules 3, 4, 5, 6, 7, 11 are
+stubless-by-default in the sense that none of them are load-bearing for the core demo
+path (`/api/story` → `/api/audio`, Modules 1/8/9/10) — they're reachable through the
+dedicated `/api/dream*` endpoints and Module 11's advisory pass, all detailed below.
 
 ## Runtime pipeline (what actually runs on every request)
 
@@ -54,12 +56,17 @@ an LLM to re-derive a name it already knows). The resulting `Story` is exactly t
 shape Module 1 produces directly — feed it to `/api/audio` and Modules 8-10 don't know or
 care which path it came from.
 
-**Both paths converge on `/api/audio` — Modules 8 → 9 → 10** (unchanged either way):
+**Both paths converge on `/api/audio` — Modules 8 → 9 → 11 → 10** (unchanged either way):
 ```python
 story = module8_audio_direction.process(story)            # Story -> Story (+emotion, +direction)
 story = module9_audio_production.process(story, tmp_dir)  # Story -> Story (+audio_path, +position_ms)
-final_path = module10_mixing_timeline.process(story, out) # Story -> Path (final mp3)
+qa_report = module11_qa_consistency.process(story)         # Story -> QAReport (advisory — see below)
+final_path = module10_mixing_timeline.process(story, out)  # Story -> Path (final mp3)
 ```
+Module 11 sits between audio metadata being ready and the final render, exactly where
+Architecture.md puts it ("before final render"). It's wrapped in its own try/except in
+`app.py` — a QA failure never blocks Module 10 from running; `qa_report` just comes back
+`None` in the response if the review pass itself errored.
 
 Verified live end-to-end: `/api/dream` → `/api/audio` through the full 1→2→3→7→8→9→10
 chain produces a real playable mp3, not just individually-tested pieces.
@@ -228,10 +235,26 @@ Other shared code (not module-specific, anyone can use):
   between requests, so the client sends back its own copy of `narrative_beats` from a prior
   `/api/dream` (or `/api/dream/edit`) call, same pattern `/api/audio` uses for `Story`.
 
-### `module11_qa_consistency/` — Stub
-Docstring explains the intended design per Architecture.md. Lowest priority per the
-architecture doc's own build order — text-only reasoning pass over the finished
-screenplay + audio metadata, cheap to add once you want it.
+### `module11_qa_consistency/` — Built
+- `schemas.py` — `QAIssue` (scene_id, line_index, category, severity, description) and
+  `QAReport` (issues + a 0-100 `consistency_score`).
+- `reviewer.py` — `review_story(story) -> QAReport`. One OpenAI JSON-mode call over the
+  fully-populated Story (every line's `emotion_scores`, `performance_direction`,
+  `duration_ms`, and every scene's `sound_cues`) — exactly the "screenplay + generated-
+  audio metadata" Architecture.md specifies. Checks exactly two things, per the doc: (1) a
+  line's performance direction/emotion contradicting the scene's tone or a character's
+  established delivery, (2) dialogue/narration implying a sound (door, footsteps, impact,
+  weather) with no matching entry in that scene's `sound_cues`.
+- Public API: `process(story) -> QAReport`.
+- **Verified it actually detects things**, not just returns a clean report every time: fed
+  a hand-built story with a "furious" scene whose line was scripted to speak "very softly
+  and calmly" plus two sound-implying lines with zero sound_cues — caught all three
+  (the contradiction at `high` severity, both missing-SFX at `medium`), scored 60/100.
+  Fed a real, well-formed generated story through the actual pipeline — scored 95/100
+  with one genuinely reasonable `low`-severity note, not a false-positive pile-up.
+- **Advisory only, by design**: wrapped in its own try/except in `app.py`'s `/api/audio`
+  handler, between Module 9 and Module 10. A QA failure (or finding issues at all) never
+  blocks the render — `AudioResponse.qa_report` is just `None` if the pass itself errored.
 
 ### `module3_narrative_reconstruction/` — Built
 - `engine.py` — `NarrativeReconstructionEngine`, the orchestrator: takes a `DreamGraph`,
@@ -271,6 +294,7 @@ screenplay + audio metadata, cheap to add once you want it.
 - **Module 7** rides along with whoever owns Module 1 or the `app.py` integration — it's small and its quality depends on the same "does the JSON come back clean" skill as Module 1's extraction prompt
 - **Modules 4 and 6** ride along with whoever owns Module 3 — both are thin orchestration layers over the same engine (different persona strings), so their quality is really "how good are the layer/lens persona prompts in `layers.py`/`lenses.py`"
 - **Module 5** rides along with whoever owns Module 2 — its correctness depends on graph versioning (Module 2's `db.py`) and provenance data (Module 3's `postprocess.py`) more than on any prompt of its own
+- **Module 11** rides along with whoever owns Modules 9/10 (`app.py`'s `/api/audio` handler) — it only makes sense to tune once you're looking at real generated-audio metadata
 
 Whoever owns `app.py` is the integration point — when two modules' contracts need to
 change together (e.g. a new `Story` field), that person coordinates the merge.

@@ -31,10 +31,16 @@ def _scene_length_ms(scene: Scene) -> int:
     return offsets[-1] + (last.duration_ms or 0)
 
 
+_FALLBACK_STAGGER_MS = 450
+_SAME_ANCHOR_STAGGER_MS = 380
+
+
 def resolve_positions(story: Story) -> Story:
     for scene in story.scenes:
         starts = _line_start_offsets(scene)
         scene_len = _scene_length_ms(scene)
+        fallback_count = 0
+        anchor_counts: dict[tuple[int, str], int] = {}
         for cue in scene.sound_cues:
             if cue.type != "one-shot":
                 continue
@@ -43,15 +49,25 @@ def resolve_positions(story: Story) -> Story:
             hint = (cue.position or "").lower()
             match = _LINE_REF.search(hint)
             if not match or not scene.lines:
-                cue.position_ms = 0
+                # No line to anchor to (often a lineless action/sound-only beat with
+                # several cues) — stagger instead of stacking every cue at 0ms at once.
+                cue.position_ms = fallback_count * _FALLBACK_STAGGER_MS
+                fallback_count += 1
                 continue
             line_num = max(1, min(len(scene.lines), int(match.group(1))))
             line_idx = line_num - 1
-            if "after" in hint:
-                cue.position_ms = min(
-                    scene_len,
-                    starts[line_idx] + (scene.lines[line_idx].duration_ms or 0),
-                )
-            else:  # "before" or unspecified relation defaults to the line's start
-                cue.position_ms = starts[line_idx]
+            relation = "after" if "after" in hint else "before"
+            base = (
+                min(scene_len, starts[line_idx] + (scene.lines[line_idx].duration_ms or 0))
+                if relation == "after"
+                else starts[line_idx]
+            )
+            # Multiple cues commonly share the same hint verbatim (e.g. four different
+            # one-shots all saying "before line 1") — without staggering, they land on the
+            # exact same millisecond and get mixed as one simultaneous pile-up, burying
+            # individually-distinct sounds (a cat yowl, glass breaking) into indistinct noise.
+            anchor = (line_idx, relation)
+            offset = anchor_counts.get(anchor, 0) * _SAME_ANCHOR_STAGGER_MS
+            anchor_counts[anchor] = anchor_counts.get(anchor, 0) + 1
+            cue.position_ms = min(scene_len, base + offset) if scene_len else base + offset
     return story

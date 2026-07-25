@@ -37,9 +37,26 @@ const timeCurrent = document.getElementById("time-current");
 const timeTotal = document.getElementById("time-total");
 const micBtn = document.getElementById("mic-btn");
 const micStatus = document.getElementById("mic-status");
+const storyInsights = document.getElementById("story-insights");
+const qaPanel = document.getElementById("qa-panel");
+const qaBadge = document.getElementById("qa-badge");
+const qaIssues = document.getElementById("qa-issues");
 
 let characterColorMap = new Map();
 let characterNameMap = new Map();
+
+/** Stable per-browser id for Module 2's totem memory (Dream Graph) — separate from the
+ * server's httpOnly dream_user_id cookie (used for the /api/story fast path), since
+ * /api/dream takes user_id as an explicit request field rather than reading the cookie. */
+function getClientUserId() {
+  const KEY = "dream_client_user_id";
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id = "web_" + crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+    localStorage.setItem(KEY, id);
+  }
+  return id;
+}
 
 SAMPLE_DREAMS.forEach((dream, i) => {
   const btn = document.createElement("button");
@@ -258,6 +275,52 @@ function toneStyle(tone) {
   return match || DEFAULT_TONE_STYLE;
 }
 
+/** Module 3 (narrative reconstruction) + Module 2 (Dream Graph) evidence — shows gap-fill
+ * count and any contradiction warnings, so the reconstruction step is visible, not just a
+ * black box between typing a dream and hearing dialogue. */
+function renderInsights(dreamResponse) {
+  const beats = dreamResponse.narrative_beats || [];
+  const gapFillCount = beats.reduce((sum, b) => sum + (b.gap_fills || []).length, 0);
+  const warnings = dreamResponse.warnings || [];
+
+  if (!beats.length) {
+    storyInsights.hidden = true;
+    return;
+  }
+
+  const parts = [`🧠 Reconstructed across ${beats.length} narrative beat${beats.length === 1 ? "" : "s"}`];
+  if (gapFillCount > 0) parts.push(`${gapFillCount} gap${gapFillCount === 1 ? "" : "s"} filled while preserving dream logic`);
+  if (warnings.length > 0) parts.push(`${warnings.length} continuity note${warnings.length === 1 ? "" : "s"}`);
+
+  storyInsights.textContent = parts.join(" · ");
+  storyInsights.title = warnings.join("\n");
+  storyInsights.hidden = false;
+}
+
+/** Module 11 (QA/consistency review) — advisory only, shown after audio finishes. */
+function renderQA(qaReport) {
+  if (!qaReport) {
+    qaPanel.hidden = true;
+    return;
+  }
+
+  const score = qaReport.consistency_score;
+  const tier = score >= 90 ? "good" : score >= 70 ? "ok" : "poor";
+  const icon = tier === "good" ? "✓" : tier === "ok" ? "!" : "⚠";
+
+  qaBadge.className = `qa-badge ${tier}`;
+  qaBadge.textContent = `${icon} Quality check: ${score}/100`;
+
+  qaIssues.innerHTML = "";
+  for (const issue of qaReport.issues || []) {
+    const li = document.createElement("li");
+    li.textContent = `Scene ${issue.scene_id}: ${issue.description}`;
+    qaIssues.appendChild(li);
+  }
+
+  qaPanel.hidden = false;
+}
+
 function renderStory(story) {
   characterColorMap = buildCharacterColorMap(story.characters);
   characterNameMap = new Map(story.characters.map((c) => [c.id, c.name]));
@@ -441,32 +504,37 @@ async function generate() {
   generateBtn.classList.add("loading");
   storyPanel.hidden = true;
   audioPanel.hidden = true;
+  qaPanel.hidden = true;
   stepsEl.hidden = false;
   resetSteps();
 
   try {
+    // Full pipeline: Module 1 (understanding) -> 2 (Dream Graph) -> 3 (narrative
+    // reconstruction, gap-filling) -> 7 (screenplay conversion) -> Story ready for audio.
     setStepState("story", "active");
-    setStatus("Extracting story structure...");
-    const storyRes = await fetch("/api/story", {
+    setStatus("Understanding your dream, building the graph, and reconstructing the narrative...");
+    const dreamRes = await fetch("/api/dream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, user_id: getClientUserId() }),
     });
-    if (!storyRes.ok) {
-      const err = await storyRes.json().catch(() => ({}));
-      throw new Error(err.detail || "Story extraction failed.");
+    if (!dreamRes.ok) {
+      const err = await dreamRes.json().catch(() => ({}));
+      throw new Error(err.detail || "Dream understanding failed.");
     }
-    const story = await storyRes.json();
+    const dreamResult = await dreamRes.json();
     setStepState("story", "done");
-    renderStory(story);
+    renderStory(dreamResult.story);
+    renderInsights(dreamResult);
 
+    // Modules 8 (audio direction) -> 9 (voices/SFX/BGM) -> 11 (QA review) -> 10 (mix)
     setStatus("Directing voices, designing sound, and mixing the final track...");
     const audioOrder = ["emotion", "voice", "sound", "mix"];
     const audioEstimates = [1500, 16000, 5000, 2500];
     const audioFetch = fetch("/api/audio", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ story }),
+      body: JSON.stringify({ story: dreamResult.story }),
     });
     const audioRes = await withSimulatedProgress(audioFetch, audioOrder, audioEstimates);
 
@@ -477,6 +545,7 @@ async function generate() {
     const result = await audioRes.json();
     renderStory(result.story);
     renderAudio(result.audio_url);
+    renderQA(result.qa_report);
     setStatus("Done — press play.");
   } catch (err) {
     setStatus(`${err.message} — try a pre-made example below, or check the server logs.`, true);
@@ -509,8 +578,10 @@ async function loadExampleFallbacks() {
       btn.addEventListener("click", () => {
         stepsEl.hidden = true;
         storyPanel.hidden = true;
+        storyInsights.hidden = true; // pre-baked examples predate Module 3, no beats to show
         renderStory(ex.story);
         renderAudio(ex.audio_url);
+        renderQA(ex.qa_report || null);
         setStatus("Loaded pre-made example.");
       });
       wrap.appendChild(btn);

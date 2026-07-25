@@ -5,11 +5,12 @@ drama — multiple character voices, emotion-matched delivery, ambient sound des
 timed sound effects, mixed into one final audio file.
 
 Built per `Dream-to-Story-Build-Spec.md`. Module boundaries follow
-`Dream-to-Story-Architecture.md` — see **[MODULES.md](MODULES.md)** for the full module
-map, ownership split, and what's built vs. stubbed. Pipeline: OpenAI (dream understanding,
-audio direction) → HuggingFace emotion classifier → edge-tts (voices) → procedural
-numpy/scipy sound design → pydub (mix). Voice input (optional) transcribes via Groq's
-free-tier Whisper.
+`Dream-to-Story-Architecture.md` — all 11 of its modules are implemented; see
+**[MODULES.md](MODULES.md)** for the full module map, ownership split, and how each one
+fits together. Pipeline: OpenAI (dream understanding, narrative reconstruction, screenplay
+conversion, audio direction, QA review) → HuggingFace emotion classifier → edge-tts
+(voices) → procedural numpy/scipy sound design → pydub (mix). Voice input (optional)
+transcribes via Groq's free-tier Whisper.
 
 ## 1. Setup
 
@@ -89,16 +90,16 @@ shared/
   llm_client.py                shared Groq client factory (used only by Module 1's voice transcription)
 modules/
   module1_dream_understanding/   BUILT  — OpenAI call, raw text -> structured Story (+ optional voice input via Groq Whisper)
-  module2_dream_graph/           BUILT  — SQLite graph + OpenAI embeddings, runs as a background side-effect after /api/story
-  module3_narrative_reconstruction/ stub — folded into Module 1
-  module4_dream_layer_engine/    stub   — not implemented
-  module5_ripple_regeneration/   stub   — not implemented
-  module6_multi_lens_generation/ stub   — not implemented
-  module7_screenplay_conversion/ stub   — folded into Module 1
+  module2_dream_graph/           BUILT  — SQLite graph + OpenAI embeddings, background side-effect after /api/story
+  module3_narrative_reconstruction/ BUILT — OpenAI, gap-filling narrative reconstruction, /api/dream
+  module4_dream_layer_engine/    BUILT  — parallel reality-layer orchestration over Module 3, /api/dream/layers
+  module5_ripple_regeneration/   BUILT  — graph versioning + provenance diffing, /api/dream/edit
+  module6_multi_lens_generation/ BUILT  — parallel genre-lens orchestration over Module 3, /api/dream/lenses
+  module7_screenplay_conversion/ BUILT  — OpenAI, narrative beats -> Story, feeds Modules 8-10
   module8_audio_direction/       BUILT  — emotion scoring + OpenAI performance direction
   module9_audio_production/      BUILT  — edge-tts voices + mood-driven procedural SFX/BGM + cue timing
   module10_mixing_timeline/      BUILT  — pydub mixing, final mp3 export
-  module11_qa_consistency/       stub   — not implemented
+  module11_qa_consistency/       BUILT  — advisory OpenAI QA pass, runs inside /api/audio
 frontend/
   index.html / app.js / style.css   vanilla JS, no build step
 samples/sample_dreams.txt    8 varied test inputs
@@ -133,14 +134,14 @@ input, and where the not-yet-built modules would plug in if your team has time f
   requirement.
 - Each character gets a consistent voice from a small pool of `edge-tts` neural voices,
   assigned in first-seen order.
-- Modules 4-7, 11 (Dream Layer Engine, Ripple Regeneration, Multi-Lens, etc.) are the
-  remaining stretch-goal features from `Dream-to-Story-Architecture.md` — not built, but
-  stubbed with clear docstrings in `modules/` for whoever wants to pick one up. Module 2
-  (Dream Graph) **is** built — it persists every generated story into a local SQLite
-  database (`output/dream_graph.db`, auto-created, no setup) and recognizes recurring
-  characters/locations across a browser session via OpenAI embeddings, but nothing reads
-  it back yet (no Dream Layer Engine or Ripple Regeneration consuming it), so it runs
-  purely as a background side-effect and never affects what you hear.
+- All 11 `Dream-to-Story-Architecture.md` modules are implemented. Only Modules 1, 8, 9,
+  10 sit in the default demo path (`/api/story` → `/api/audio`) — Modules 2-7 and 11 are
+  reachable through the dedicated `/api/dream`, `/api/dream/layers`, `/api/dream/lenses`,
+  and `/api/dream/edit` endpoints (see MODULES.md for exactly how each fits together), so
+  none of them can break the simple demo path even though they're all real, tested code.
+  Module 2 (Dream Graph) persists every generated story into a local SQLite database
+  (`output/dream_graph.db`, auto-created, no setup) and recognizes recurring characters/
+  locations across a browser session via OpenAI embeddings.
 
 ## 7. Troubleshooting
 

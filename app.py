@@ -51,6 +51,7 @@ from modules import module7_screenplay_conversion as module7
 from modules import module8_audio_direction as module8
 from modules import module9_audio_production as module9
 from modules import module10_mixing_timeline as module10
+from modules import module11_qa_consistency as module11
 from modules.module2_dream_graph import build_and_persist_graph as build_graph
 from modules.module3_narrative_reconstruction import (
     GapFill,
@@ -74,6 +75,8 @@ from shared.models import (
     DreamRequest,
     DreamResponse,
     NarrativeBeatResponse,
+    QAIssueResponse,
+    QAReportResponse,
     Story,
     StoryRequest,
 )
@@ -440,19 +443,42 @@ async def edit_dream(req: DreamEditRequest):
 
 @app.post("/api/audio", response_model=AudioResponse)
 def create_audio(req: AudioRequest):
-    """Module 1's output (already in req.story) flows through Modules 8 -> 9 -> 10."""
+    """Module 1's output (already in req.story) flows through Modules 8 -> 9 -> 11 -> 10."""
     story = req.story
     tmp_dir = OUTPUT_DIR / "tmp" / uuid.uuid4().hex
     try:
         story = module8.process(story)          # Module 1 output -> Module 8 input
         story = module9.process(story, tmp_dir)  # Module 8 output -> Module 9 input
+
+        # Module 11 — advisory QA pass over the finished screenplay + audio metadata
+        # (durations, cue list), per Architecture.md. Must never block the render: a
+        # network hiccup or a found issue is just surfaced in the response, not fatal.
+        qa_report = None
+        try:
+            report = module11.process(story)
+            qa_report = QAReportResponse(
+                consistency_score=report.consistency_score,
+                issues=[
+                    QAIssueResponse(
+                        scene_id=i.scene_id,
+                        line_index=i.line_index,
+                        category=i.category,
+                        severity=i.severity,
+                        description=i.description,
+                    )
+                    for i in report.issues
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[module11_qa_consistency] review failed (non-fatal): {exc}")
+
         final_path = module10.process(story, OUTPUT_DIR)  # Module 9 output -> Module 10 input
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Audio generation failed: {exc}") from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    return AudioResponse(audio_url=f"/output/{final_path.name}", story=story)
+    return AudioResponse(audio_url=f"/output/{final_path.name}", story=story, qa_report=qa_report)
 
 
 # ---------------------------------------------------------------------------

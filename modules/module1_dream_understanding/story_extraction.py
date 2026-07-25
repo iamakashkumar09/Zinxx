@@ -23,7 +23,12 @@ expected, since dreams are described that way.
 
 Given the user's raw description below, produce a structured JSON story with:
 - title: a short evocative title
-- characters: every character mentioned or clearly implied, with an id, name, and role
+- characters: every SPEAKING character mentioned or clearly implied (people, the dreamer
+  themself as narrator, any being the dream explicitly has talking), with an id, name, and
+  role. Animals, crowds-as-a-mass, and non-verbal presences (a dog, a wolf, background
+  voices, weather, a house) are NOT characters unless the description has them literally
+  speaking — represent them instead through sound_cues (a bark, a howl, murmuring voices,
+  thunder, creaking) and through narration lines said by an actual speaking character.
 - scenes: 2-4 scenes forming a clear emotional arc (e.g. calm → rising tension → climax →
   resolution), each with a setting, an emotional_tone, 2-5 dialogue/narration lines
   attributed to a character, and sound_cues (ambient + one-shot) implied by the setting
@@ -31,7 +36,10 @@ Given the user's raw description below, produce a structured JSON story with:
 
 Keep dialogue natural and short — this will be read aloud. Do not invent excessive new
 plot; stay close to what the user described, filling gaps only enough to make it coherent
-and performable.
+and performable. Preserve every concrete sensory detail the user actually wrote (specific
+sounds, objects, actions) — don't launder them into vague or abstract language, and don't
+let a non-speaking presence "talk" — give voice only to what the dream shows actually
+speaking, and route everything else through sound_cues.
 
 Every line's "speaker" must be the id of a character listed in "characters".
 Every sound_cue "type" must be either "ambient" or "one-shot". For "one-shot" cues, include

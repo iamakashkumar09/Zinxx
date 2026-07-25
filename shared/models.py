@@ -64,9 +64,23 @@ class AudioRequest(BaseModel):
     story: Story
 
 
+class QAIssueResponse(BaseModel):
+    scene_id: int
+    line_index: Optional[int] = None
+    category: str
+    severity: str
+    description: str
+
+
+class QAReportResponse(BaseModel):
+    consistency_score: int = 100
+    issues: list[QAIssueResponse] = Field(default_factory=list)
+
+
 class AudioResponse(BaseModel):
     audio_url: str
     story: Story
+    qa_report: Optional[QAReportResponse] = None  # Module 11 — advisory, may be None if the review pass itself failed
 
 
 # ---------------------------------------------------------------------------

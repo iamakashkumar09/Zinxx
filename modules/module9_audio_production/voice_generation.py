@@ -35,13 +35,19 @@ VOICE_POOL = [
 # stress, or slower when sad) reads as the same person being more agitated/calm, not as a
 # different speaker, so it carries most of the emotional weight here; pitch is now just a
 # light seasoning on top, capped low.
+#
+# NOTE: a chase/panic dream scores "fear" on nearly every line (the classifier has no
+# scene-level context, just line text), so these peak values are what the WHOLE piece
+# ends up sounding like most of the time, not just its most intense moment — tuned down
+# from an earlier pass that used fear=28/anger=24/surprise=22 and read as "speaking very
+# fast" throughout a tense story instead of only picking up pace at the tense parts.
 EMOTION_PROSODY = {
-    "anger": (24, 8),
-    "fear": (28, 7),
-    "joy": (14, 6),
-    "surprise": (22, 8),
-    "sadness": (-20, -7),
-    "disgust": (-8, -5),
+    "anger": (16, 8),
+    "fear": (18, 7),
+    "joy": (10, 6),
+    "surprise": (15, 8),
+    "sadness": (-16, -7),
+    "disgust": (-6, -5),
     "neutral": (0, 0),
 }
 
@@ -49,8 +55,8 @@ EMOTION_PROSODY = {
 # intensity so emotion isn't only audible on the single most-confident line, but kept
 # modest — too high a floor means near-every line gets pushed hard, which is what made
 # pitch swing wildly line-to-line last time.
-_MIN_INTENSITY = 0.35
-_MAX_ABS_RATE = 35
+_MIN_INTENSITY = 0.3
+_MAX_ABS_RATE = 20
 _MAX_ABS_PITCH = 12
 
 # edge-tts's free endpoint occasionally drops a connection mid-write under the load of
