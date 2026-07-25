@@ -3,6 +3,7 @@
 import { prisma } from '@/lib/prisma'
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
+import bcrypt from 'bcryptjs'
 
 const SECRET_KEY = new TextEncoder().encode(
   process.env.JWT_SECRET || 'dream_archaeology_secret_key_2026_zinxx_hackathon_default'
@@ -57,7 +58,12 @@ export async function loginUser(email, password) {
   if (!prisma) return null;
   try {
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user || user.password !== password) throw new Error("Invalid credentials");
+    if (!user) throw new Error("Invalid credentials");
+    
+    // Securely compare password with bcrypt (includes fallback for any legacy plaintext test accounts)
+    const isMatch = await bcrypt.compare(password, user.password).catch(() => false) || (user.password === password);
+    if (!isMatch) throw new Error("Invalid credentials");
+
     const sessionUser = { id: user.id, email: user.email, name: user.name };
     const token = await createJwtSession(sessionUser);
     return { ...sessionUser, token };
@@ -73,7 +79,11 @@ export async function registerUser(email, password, name) {
   try {
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) throw new Error("Email already exists");
-    const user = await prisma.user.create({ data: { email, password, name } });
+    
+    // Encrypt password using bcrypt with 10 salt rounds before saving to database
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({ data: { email, password: hashedPassword, name } });
+    
     const sessionUser = { id: user.id, email: user.email, name: user.name };
     const token = await createJwtSession(sessionUser);
     return { ...sessionUser, token };
