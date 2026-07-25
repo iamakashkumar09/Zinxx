@@ -1,21 +1,19 @@
-"""Module 6 — Multi-Lens Narrative Generation. NOT IMPLEMENTED in this build.
+"""Module 6 — Multi-Lens Narrative Generation.
 
-Per Architecture.md: retell the same dream through different genre lenses (psychological /
-thriller / mystery / fantasy / adventure) — one LLM call per lens, run in parallel, same
-input, different system-prompt persona.
+Public API: process(graph, session_meta, lens_names=None, model_tier="draft") -> DreamLenses
 
-Why skipped: this build produces exactly one narrative interpretation per generation (no
-lens selector in the UI). Straightforward to add later since it doesn't depend on any other
-missing module.
+Input: Module 2's DreamGraph. Output: a DreamLenses bundle — one Module 3 NarrativeOutput
+per lens (default: all 5 of psychological / thriller / mystery / fantasy / adventure),
+generated in parallel.
 
-If you pick this up: this is the easiest stretch feature to bolt on independently — add a
-`lens` parameter to Module 1's (dream_understanding) prompt template and a lens picker in
-the frontend. No dependency on Modules 2/4/5.
+Each lens is independently a valid Module 3 NarrativeOutput, so any of them can be fed
+into Module 7 (screenplay_conversion) exactly like the default narrative — e.g.
+`module7.process(lenses.lenses["thriller"], graph)` gets you the audio-ready screenplay
+for just that lens.
 """
 
+from modules.module6_multi_lens_generation.lenses import DreamLenses, LENS_PERSONAS, generate_lenses
 
-def process(*args, **kwargs):
-    raise NotImplementedError(
-        "Module 6 (Multi-Lens Generation) is not implemented in this build. "
-        "Easiest stretch goal to add — see this module's docstring."
-    )
+
+async def process(graph, session_meta, lens_names=None, model_tier: str = "draft") -> DreamLenses:
+    return await generate_lenses(graph, session_meta, lens_names=lens_names, model_tier=model_tier)

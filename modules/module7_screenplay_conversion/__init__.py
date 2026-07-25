@@ -1,23 +1,20 @@
-"""Module 7 — Screenplay Conversion. Folded into Module 1 in this build.
+"""Module 7 — Screenplay Conversion.
 
-Per Architecture.md: turn the finalized narrative into a structured screenplay JSON
-(scenes, dialogue lines tagged by character, SFX cues, music cues, pacing notes) — the
-contract between the text pipeline and the audio pipeline.
+Public API: process(narrative_output, graph, title_hint=None) -> Story
 
-Current status: Module 1's (dream_understanding) single Groq call already emits this
-shape directly (see shared/models.py's Story/Scene/Line/SoundCue schema) as part of its one
-JSON response, since there's no separate narrative-reconstruction pass to convert from yet.
+Input: Module 3's NarrativeOutput (reconstructed narrative beats) and Module 2's
+DreamGraph (authoritative character/location facts). Output: a Story (shared/models.py) —
+the same schema Module 1 produces directly in the fast-preview path — ready to feed
+straight into Module 8 (audio_direction).
 
-If you pick this up: split it out once Module 3 (narrative_reconstruction) exists as its
-own step — this module would then take plain reconstructed narrative text and convert it
-into the Story JSON schema, rather than doing extraction + reconstruction + conversion in
-one prompt.
+This is what turns the full 1 -> 2 -> 3 pipeline (dream understanding -> graph ->
+reconstructed narrative) into something Modules 8-10 can actually voice, instead of
+Module 3's output being a dead end that only gets displayed as text.
 """
 
+from modules.module7_screenplay_conversion.converter import convert_to_screenplay
+from shared.models import Story
 
-def process(*args, **kwargs):
-    raise NotImplementedError(
-        "Module 7 (Screenplay Conversion) is not a separate step in this build — its job "
-        "currently happens inside module1_dream_understanding/story_extraction.py, which "
-        "emits the Story JSON schema (shared/models.py) directly."
-    )
+
+def process(narrative_output, graph, title_hint: str | None = None) -> Story:
+    return convert_to_screenplay(narrative_output, graph, title_hint=title_hint)
