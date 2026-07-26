@@ -24,7 +24,28 @@ const CinematicAudioPlayer = ({ title = "Final Master.mp3", storyData = null }) 
   const analyserRef = useRef(null);
   const sourceNodeRef = useRef(null);
 
-  const audioUrl = storyData?.audio_url ? `${BACKEND_URL}${storyData.audio_url}` : null;
+  const [currentAudioUrl, setCurrentAudioUrl] = useState(() => {
+    if (!storyData?.audio_url) return null;
+    if (storyData.audio_url.startsWith('http')) return storyData.audio_url;
+    return `${BACKEND_URL}${storyData.audio_url}`;
+  });
+
+  useEffect(() => {
+    if (!storyData?.audio_url) {
+      setCurrentAudioUrl(null);
+    } else if (storyData.audio_url.startsWith('http')) {
+      setCurrentAudioUrl(storyData.audio_url);
+    } else {
+      setCurrentAudioUrl(`${BACKEND_URL}${storyData.audio_url}`);
+    }
+  }, [storyData?.audio_url]);
+
+  const handleAudioError = () => {
+    if (currentAudioUrl && currentAudioUrl.startsWith(BACKEND_URL) && storyData?.audio_url) {
+      console.info("Backend audio URL unreachable, falling back to local frontend public URL:", storyData.audio_url);
+      setCurrentAudioUrl(storyData.audio_url);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -64,9 +85,9 @@ const CinematicAudioPlayer = ({ title = "Final Master.mp3", storyData = null }) 
   };
 
   const handleDownload = () => {
-    if (!audioUrl) return;
+    if (!currentAudioUrl) return;
     const a = document.createElement('a');
-    a.href = audioUrl;
+    a.href = currentAudioUrl;
     a.download = `${(title || 'dream_master').replace(/[^a-z0-9]/gi, '_').toLowerCase()}.mp3`;
     document.body.appendChild(a);
     a.click();
@@ -91,7 +112,7 @@ const CinematicAudioPlayer = ({ title = "Final Master.mp3", storyData = null }) 
     audio.currentTime = Math.max(0, Math.min(duration || 0, audio.currentTime + deltaSeconds));
   };
 
-  if (!audioUrl) {
+  if (!currentAudioUrl) {
     return (
       <div className="relative overflow-hidden rounded-2xl bg-[#0a0816] border border-white/10 shadow-2xl p-6 flex items-center space-x-4">
         <div className="p-3.5 bg-amber-500/10 rounded-2xl border border-amber-500/30 shrink-0">
@@ -111,8 +132,9 @@ const CinematicAudioPlayer = ({ title = "Final Master.mp3", storyData = null }) 
 
       <audio
         ref={audioRef}
-        src={audioUrl}
+        src={currentAudioUrl}
         preload="metadata"
+        onError={handleAudioError}
         onPlay={() => { setIsPlaying(true); setStatusLabel('NOW PLAYING'); }}
         onPause={() => setIsPlaying(false)}
         onEnded={() => { setIsPlaying(false); setStatusLabel('PLAYBACK COMPLETE'); }}
