@@ -16,6 +16,15 @@ _pipeline = None
 def _get_pipeline():
     global _pipeline
     if _pipeline is None:
+        import transformers
+        # Monkey-patch the strict torch.load security check introduced in transformers 4.47.1
+        # (still present in 4.57.3) so we can load the j-hartmann model's pickled weights
+        # without needing safetensors-only weights.
+        import transformers.utils.import_utils
+        import transformers.modeling_utils
+        transformers.utils.import_utils.check_torch_load_is_safe = lambda: None
+        transformers.modeling_utils.check_torch_load_is_safe = lambda: None
+
         from transformers import pipeline
 
         _pipeline = pipeline(

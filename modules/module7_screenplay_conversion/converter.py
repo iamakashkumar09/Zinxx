@@ -167,7 +167,7 @@ def _call_llm(characters_payload: list[dict], beats_payload: list[dict]) -> dict
     )
     completion = client.chat.completions.create(
         model=OPENAI_MODEL,
-        max_tokens=4096,
+        max_completion_tokens=4096,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt}],
     )

@@ -1,159 +1,80 @@
 """Part of Module 9 — Audio Production (character voices).
 
-Text-to-speech generation per line via edge-tts (free, no API key — used instead of
-gpt-4o-mini-tts/tts-1-hd from the OpenAI-based architecture doc), with a consistent voice
-per character and prosody (rate/pitch) nudged by that line's emotion scores from Module 8.
+Text-to-speech generation per line via Qwen3-TTS (VoiceDesign mode).
+Uses the VoiceDesign model to map Module 8's natural language performance_direction 
+directly into expressive, context-aware speech without relying on an API.
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
-import edge_tts
+import soundfile as sf
 from pydub import AudioSegment
 from pydub.exceptions import CouldntDecodeError
 
 from shared.models import Story
 
-VOICE_POOL = [
-    "en-US-GuyNeural",
-    "en-US-JennyNeural",
-    "en-US-AriaNeural",
-    "en-GB-RyanNeural",
-    "en-GB-SoniaNeural",
-    "en-AU-NatashaNeural",
-    "en-US-DavisNeural",
-    "en-IE-ConnorNeural",
-]
+# Initialize Qwen3TTS lazily
+_qwen_model = None
 
-# top-emotion -> (rate_pct_at_full_intensity, pitch_hz_at_full_intensity)
-#
-# PITCH is the dangerous knob here, not rate: a listener identifies "who's speaking"
-# largely by pitch, so a big pitch swing (we previously went up to +-32Hz) makes the same
-# edge-tts voice sound like a different character from line to line — exactly the "why
-# does the narrator keep changing voice" complaint. RATE (speaking faster/slower under
-# stress, or slower when sad) reads as the same person being more agitated/calm, not as a
-# different speaker, so it carries most of the emotional weight here; pitch is now just a
-# light seasoning on top, capped low.
-#
-# NOTE: a chase/panic dream scores "fear" on nearly every line (the classifier has no
-# scene-level context, just line text), so these peak values are what the WHOLE piece
-# ends up sounding like most of the time, not just its most intense moment — tuned down
-# from an earlier pass that used fear=28/anger=24/surprise=22 and read as "speaking very
-# fast" throughout a tense story instead of only picking up pace at the tense parts.
-EMOTION_PROSODY = {
-    "anger": (16, 8),
-    "fear": (18, 7),
-    "joy": (10, 6),
-    "surprise": (15, 8),
-    "sadness": (-16, -7),
-    "disgust": (-6, -5),
-    "neutral": (0, 0),
-}
-
-# Scores below the dominant emotion's raw confidence still get a floor of "effective"
-# intensity so emotion isn't only audible on the single most-confident line, but kept
-# modest — too high a floor means near-every line gets pushed hard, which is what made
-# pitch swing wildly line-to-line last time.
-_MIN_INTENSITY = 0.3
-_MAX_ABS_RATE = 20
-_MAX_ABS_PITCH = 12
-
-# edge-tts's free endpoint occasionally drops a connection mid-write under the load of
-# synthesizing every line in a story at once (asyncio.gather), leaving a truncated/corrupt
-# mp3 that pydub can't decode later during mixing. Retrying + capping concurrency fixes
-# both the cause (too many simultaneous connections) and the symptom (bad files).
-_MAX_SYNTH_ATTEMPTS = 3
-_MAX_CONCURRENT_REQUESTS = 6
-
-
-def assign_voices(story: Story) -> dict[str, str]:
-    mapping: dict[str, str] = {}
-    for i, character in enumerate(story.characters):
-        mapping[character.id] = VOICE_POOL[i % len(VOICE_POOL)]
-    return mapping
-
-
-def _prosody_for(emotion_scores: dict[str, float] | None) -> tuple[str, str]:
-    if not emotion_scores:
-        return "+0%", "+0Hz"
-    top_emotion, score = max(emotion_scores.items(), key=lambda kv: kv[1])
-    if top_emotion == "neutral":
-        return "+0%", "+0Hz"
-
-    rate_per, pitch_per = EMOTION_PROSODY.get(top_emotion, (0, 0))
-    intensity = _MIN_INTENSITY + (1 - _MIN_INTENSITY) * score
-    rate = max(-_MAX_ABS_RATE, min(_MAX_ABS_RATE, round(rate_per * intensity)))
-    pitch = max(-_MAX_ABS_PITCH, min(_MAX_ABS_PITCH, round(pitch_per * intensity)))
-    rate_str = f"{'+' if rate >= 0 else ''}{rate}%"
-    pitch_str = f"{'+' if pitch >= 0 else ''}{pitch}Hz"
-    return rate_str, pitch_str
-
+def _get_qwen_model():
+    global _qwen_model
+    if _qwen_model is None:
+        from qwen_tts import Qwen3TTSModel
+        import torch
+        # float16 is GPU-only; CPU falls back to float32.
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if device == "cuda" else torch.float32
+        _qwen_model = Qwen3TTSModel.from_pretrained(
+            "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+            device_map=device,
+            dtype=dtype
+        )
+    return _qwen_model
 
 def _is_valid_audio_file(path: Path) -> bool:
     if not path.exists() or path.stat().st_size < 256:
         return False
     try:
-        AudioSegment.from_file(path, format="mp3")
+        AudioSegment.from_file(path, format="wav")
         return True
     except CouldntDecodeError:
         return False
 
-
-async def _synthesize_line(
-    text: str, voice: str, rate: str, pitch: str, out_path: Path, semaphore: asyncio.Semaphore
-) -> None:
-    last_error: Exception | None = None
-    for attempt in range(_MAX_SYNTH_ATTEMPTS):
-        try:
-            async with semaphore:
-                communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-                await communicate.save(str(out_path))
-            if _is_valid_audio_file(out_path):
-                return
-            last_error = RuntimeError("edge-tts wrote an empty/unreadable audio file")
-        except Exception as exc:  # noqa: BLE001 - transient network hiccups, worth retrying
-            last_error = exc
-        out_path.unlink(missing_ok=True)
-        if attempt < _MAX_SYNTH_ATTEMPTS - 1:
-            await asyncio.sleep(0.5 * (attempt + 1))
-
-    raise RuntimeError(
-        f"Voice synthesis failed after {_MAX_SYNTH_ATTEMPTS} attempts for line {text[:60]!r}: {last_error}"
-    ) from last_error
-
-
-async def _synthesize_all(jobs: list[tuple[str, str, str, str, Path]]) -> None:
-    semaphore = asyncio.Semaphore(_MAX_CONCURRENT_REQUESTS)
-    await asyncio.gather(
-        *[
-            _synthesize_line(text, voice, rate, pitch, path, semaphore)
-            for text, voice, rate, pitch, path in jobs
-        ]
-    )
-
-
 def generate_voices(story: Story, tmp_dir: Path) -> Story:
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    voice_map = assign_voices(story)
+    model = _get_qwen_model()
 
-    jobs: list[tuple[str, str, str, str, Path]] = []
     line_paths: list[Path] = []
+    
+    # We assign speakers using the character ID as the 'speaker' name
     for scene in story.scenes:
         for line in scene.lines:
-            voice = voice_map.get(line.speaker, VOICE_POOL[0])
-            rate, pitch = _prosody_for(line.emotion_scores)
-            out_path = tmp_dir / f"line_{uuid.uuid4().hex}.mp3"
-            jobs.append((line.text, voice, rate, pitch, out_path))
+            
+            direction = line.performance_direction or "Speak normally."
+            
+            # Using VoiceDesign which generates entirely new voices from instructions
+            wavs, sr = model.generate_voice_design(
+                text=line.text,
+                language="English",
+                instruct=direction,
+            )
+            
+            # Save the WAV file using soundfile
+            out_path = tmp_dir / f"line_{uuid.uuid4().hex}.wav"
+            sf.write(str(out_path), wavs[0], sr)
+            
+            if not _is_valid_audio_file(out_path):
+                raise RuntimeError(f"Failed to generate valid audio for line: {line.text}")
+                
             line_paths.append(out_path)
             line.audio_path = str(out_path)
 
-    asyncio.run(_synthesize_all(jobs))
-
+    # Process all paths to get duration
     idx = 0
     for scene in story.scenes:
         for line in scene.lines:
-            audio = AudioSegment.from_file(line_paths[idx], format="mp3")
+            audio = AudioSegment.from_file(line_paths[idx], format="wav")
             line.duration_ms = len(audio)
             idx += 1
 
