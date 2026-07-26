@@ -6,7 +6,29 @@ import { AuthScreen } from './components/AuthScreen';
 import { LandingPage } from './components/LandingPage';
 import { CinematicScriptView } from './components/CinematicScriptView';
 import { NARRATIVE_LENSES, PROCESSING_STEPS, MOCK_STORY_DATA, MOCK_DREAM_GRAPH, Typewriter, BlinkingCursor } from '@/lib/constants';
-import { saveDream, getDreams, deleteDream, toggleDreamFavorite, extractDreamGraphAI, synthesizeScreenplayAI, getSessionUser, logoutUser } from './actions';
+import { saveDream, getDreams, deleteDream, toggleDreamFavorite, getStoryPreview, generateDreamStory, generateAudio, getSessionUser, logoutUser } from './actions';
+
+/** Stable per-browser id for Module 2's Dream Graph totem memory. Shared localStorage key
+ * with frontend/app.js's getClientUserId() so both UIs recognize the same visitor. */
+function getClientUserId(): string {
+  const KEY = "dream_client_user_id";
+  if (typeof window === 'undefined') return "web_server";
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id = "web_" + crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+    localStorage.setItem(KEY, id);
+  }
+  return id;
+}
+
+/** Full pipeline: Module 1->2->3->7 (dream understanding/graph/reconstruction/screenplay)
+ * followed by Module 8->9->10 (audio direction, real Qwen3-TTS voices + Stable Audio
+ * music/SFX, mixdown) — merged into the single result shape CinematicScriptView expects. */
+async function synthesizeFullStory(inputText: string, followUpAnswer: string, lens: string) {
+  const story: any = await generateDreamStory(inputText, followUpAnswer, getClientUserId());
+  const audio: any = await generateAudio(story);
+  return { ...story, lens, audio_url: audio.audio_url, qa_report: audio.qa_report };
+}
 
 export default function DreamToStoryApp() {
   const [user, setUser] = useState<any>(null);
@@ -197,15 +219,16 @@ export default function DreamToStoryApp() {
     setStatus("extracting");
     synthesisPromiseRef.current = null;
     try {
-      const graph = await extractDreamGraphAI(inputText);
+      const graph = await getStoryPreview(inputText);
       setDreamGraph(graph);
     } catch (err) {
-      console.warn("AI extraction failed (using fallback graph):", err);
+      console.warn("Backend story preview failed (using fallback graph):", err);
       setDreamGraph(MOCK_DREAM_GRAPH);
     } finally {
       setStatus("conversational");
-      // Immediately kick off screenplay generation in the background so it completes concurrently during the animation!
-      synthesisPromiseRef.current = synthesizeScreenplayAI(inputText, "", selectedLens)
+      // Immediately kick off full synthesis (story + real audio) in the background so it
+      // completes concurrently during the animation!
+      synthesisPromiseRef.current = synthesizeFullStory(inputText, "", selectedLens)
         .catch(err => { console.warn("Background pre-gen failed:", err); return null; });
     }
   };
@@ -215,7 +238,7 @@ export default function DreamToStoryApp() {
     setActiveStepIndex(0);
     setCurrentResult(null);
     if (followUpAnswer.trim() || !synthesisPromiseRef.current) {
-      synthesisPromiseRef.current = synthesizeScreenplayAI(inputText, followUpAnswer, selectedLens)
+      synthesisPromiseRef.current = synthesizeFullStory(inputText, followUpAnswer, selectedLens)
         .catch(err => { console.warn("Synthesis failed:", err); return null; });
     }
   };
@@ -446,13 +469,18 @@ export default function DreamToStoryApp() {
   };
 
   useEffect(() => {
-    if (status === "processing" && activeStepIndex >= 0 && activeStepIndex < PROCESSING_STEPS.length) {
+    // Steps animate on their estimated durations up through the second-to-last one. The
+    // last step is intentionally never auto-advanced past — it stays "active" (pulsing)
+    // for however long the real backend call actually takes (real TTS + audio synthesis
+    // can run well past the estimated timeline), instead of racing ahead and looking
+    // finished/frozen while the response is still in flight.
+    if (status === "processing" && activeStepIndex >= 0 && activeStepIndex < PROCESSING_STEPS.length - 1) {
       const step = PROCESSING_STEPS[activeStepIndex];
       const timer = setTimeout(() => {
         setActiveStepIndex(prev => prev + 1);
       }, step.duration);
       return () => clearTimeout(timer);
-    } else if (status === "processing" && activeStepIndex === PROCESSING_STEPS.length) {
+    } else if (status === "processing" && activeStepIndex === PROCESSING_STEPS.length - 1) {
       let isCancelled = false;
       const getStoryResult = async () => {
         try {
@@ -461,7 +489,7 @@ export default function DreamToStoryApp() {
             aiResult = await synthesisPromiseRef.current;
           }
           if (!aiResult) {
-            aiResult = await synthesizeScreenplayAI(inputText, followUpAnswer, selectedLens);
+            aiResult = await synthesizeFullStory(inputText, followUpAnswer, selectedLens);
           }
           if (!isCancelled) {
             const finalStory = aiResult || { ...MOCK_STORY_DATA, title: `The Dream of ${new Date().toLocaleDateString()}`, lens: selectedLens };
@@ -977,6 +1005,7 @@ export default function DreamToStoryApp() {
                           const isActive = idx === activeStepIndex;
                           const isPast = idx < activeStepIndex;
                           const isFuture = idx > activeStepIndex;
+                          const isOpenEnded = idx === PROCESSING_STEPS.length - 1;
 
                           return (
                             <div key={step.id} className={`flex items-start relative transition-all duration-1000 ease-out ${isFuture ? 'opacity-20 translate-y-4' : 'opacity-100 translate-y-0'}`}>
@@ -1006,9 +1035,19 @@ export default function DreamToStoryApp() {
                                   <div className="overflow-hidden">
                                     <div className="text-[11px] text-slate-400 space-y-2 bg-black/40 p-4 rounded-xl border border-white/5 shadow-inner relative overflow-hidden">
                                       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-r from-transparent via-fuchsia-500/5 to-transparent animate-[shimmer_3s_infinite]" />
-                                      <p className="animate-in fade-in slide-in-from-left-4 duration-500 delay-300 fill-mode-both flex items-center relative z-10"><span className="text-fuchsia-500 mr-2 opacity-70">{'>'}</span> establishing layer constraints...</p>
-                                      <p className="animate-in fade-in slide-in-from-left-4 duration-500 delay-[1200ms] fill-mode-both flex items-center relative z-10"><span className="text-fuchsia-500 mr-2 opacity-70">{'>'}</span> resolving contradictory nodes...</p>
-                                      <p className="animate-in fade-in slide-in-from-left-4 duration-500 delay-[2000ms] fill-mode-both flex items-center relative z-10"><span className="text-indigo-400 mr-2 opacity-70">{'>'}</span> queuing sub-module pipeline...</p>
+                                      {isOpenEnded ? (
+                                        <>
+                                          <p className="animate-in fade-in slide-in-from-left-4 duration-500 delay-300 fill-mode-both flex items-center relative z-10"><span className="text-fuchsia-500 mr-2 opacity-70">{'>'}</span> rendering character voices line by line...</p>
+                                          <p className="animate-in fade-in slide-in-from-left-4 duration-500 delay-[1200ms] fill-mode-both flex items-center relative z-10"><span className="text-fuchsia-500 mr-2 opacity-70">{'>'}</span> generating ambient score & sound effects...</p>
+                                          <p className="animate-pulse flex items-center relative z-10"><span className="text-indigo-400 mr-2 opacity-70">{'>'}</span> mixing final master — no fixed ETA, thanks for your patience...</p>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <p className="animate-in fade-in slide-in-from-left-4 duration-500 delay-300 fill-mode-both flex items-center relative z-10"><span className="text-fuchsia-500 mr-2 opacity-70">{'>'}</span> establishing layer constraints...</p>
+                                          <p className="animate-in fade-in slide-in-from-left-4 duration-500 delay-[1200ms] fill-mode-both flex items-center relative z-10"><span className="text-fuchsia-500 mr-2 opacity-70">{'>'}</span> resolving contradictory nodes...</p>
+                                          <p className="animate-in fade-in slide-in-from-left-4 duration-500 delay-[2000ms] fill-mode-both flex items-center relative z-10"><span className="text-indigo-400 mr-2 opacity-70">{'>'}</span> queuing sub-module pipeline...</p>
+                                        </>
+                                      )}
                                     </div>
                                   </div>
                                 </div>

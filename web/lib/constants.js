@@ -3,6 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import { BrainCircuit, Zap, Search, Sparkles } from 'lucide-react';
 
+// FastAPI backend (Zinxx/app.py) — the real dream pipeline + Qwen3-TTS/Stable Audio synthesis.
+export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+
 export const NARRATIVE_LENSES = [
   { id: 'psychological', label: 'Psychological', icon: BrainCircuit, color: 'text-indigo-400', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
   { id: 'thriller', label: 'Thriller', icon: Zap, color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20' },
@@ -58,12 +61,17 @@ export const MOCK_STORY_DATA = {
   ]
 };
 
+// Durations are estimates for the real backend calls (page.tsx's synthesizeFullStory):
+// the first three roughly track /api/dream (Modules 1->2->3->7 — LLM calls, a few
+// seconds each); the last step tracks /api/audio (Modules 8->9->10 — real Qwen3-TTS
+// voice + Stable Audio music/SFX synthesis, which is the slow part, especially on CPU).
+// The last step's duration is intentionally unused for auto-advancing (see page.tsx) —
+// it just stays active/pulsing until the real response actually arrives.
 export const PROCESSING_STEPS = [
-  { id: 'reconstruct', label: 'Narrative Reconstruction & Layer Mapping', duration: 1000 },
-  { id: 'screenplay', label: 'Screenplay Conversion (Dialogue & Cues)', duration: 800 },
-  { id: 'direction', label: 'Audio Direction Engine (Emotion & Casting)', duration: 1000 },
-  { id: 'voice', label: 'Synthesizing Voices (gpt-4o-mini-tts)', duration: 1200 },
-  { id: 'mix', label: 'Composing Timeline (Ducking & SFX Mix)', duration: 1200 }
+  { id: 'reconstruct', label: 'Narrative Reconstruction & Layer Mapping', duration: 3000 },
+  { id: 'screenplay', label: 'Screenplay Conversion (Dialogue & Cues)', duration: 2500 },
+  { id: 'direction', label: 'Audio Direction Engine (Emotion & Casting)', duration: 2500 },
+  { id: 'voice', label: 'Synthesizing Voices, Score & Final Mix — this can take a few minutes', duration: 0 },
 ];
 
 // Helper components used within views

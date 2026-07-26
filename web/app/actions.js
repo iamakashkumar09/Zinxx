@@ -172,122 +172,71 @@ export async function toggleDreamFavorite(id, isFavorite) {
   }
 }
 
-async function callGemini(prompt, apiKey) {
-  const models = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"];
-  let lastError = null;
-  for (const model of models) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.7
-          }
-        })
-      });
-      if (!response.ok) {
-        const errText = await response.text();
-        console.warn(`Model ${model} failed:`, errText);
-        lastError = new Error(`Gemini (${model}): ${response.statusText}`);
-        continue;
-      }
-      const data = await response.json();
-      const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (jsonText) {
-        return JSON.parse(jsonText);
-      }
-    } catch (e) {
-      lastError = e;
+// FastAPI backend (Zinxx/app.py) — the real dream pipeline (Modules 1->2->3->7) and
+// audio production (Modules 8->9->10, real Qwen3-TTS voices + Stable Audio music/SFX).
+// Not imported from lib/constants.js because that file is 'use client' and this one is
+// 'use server' — kept as separate, identically-defaulted env reads instead.
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+
+async function backendFetch(path, body) {
+  let res;
+  try {
+    res = await fetch(`${BACKEND_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new Error(`Could not reach backend at ${BACKEND_URL}${path} — is uvicorn running? (${e.message})`);
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Backend request to ${path} failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/** Module 1 only — fast preview, used to populate the "Dream Graph" node visualization
+ * shown during the studio's "extracting" step, before the full pipeline runs. */
+export async function getStoryPreview(inputText) {
+  const story = await backendFetch('/api/story', { text: inputText });
+
+  const nodes = [];
+  story.characters.forEach((c, i) => {
+    nodes.push({ id: `char_${i}`, type: 'Character', label: c.name, layer: 'Conscious' });
+  });
+  const seenSettings = new Set();
+  const seenTones = new Set();
+  story.scenes.forEach((scene, i) => {
+    if (scene.setting && !seenSettings.has(scene.setting)) {
+      seenSettings.add(scene.setting);
+      nodes.push({ id: `loc_${i}`, type: 'Location', label: scene.setting, layer: 'Symbolic' });
     }
-  }
-  throw lastError || new Error("Failed to generate content with Gemini API");
-}
-
-export async function extractDreamGraphAI(inputText, customApiKey = null) {
-  const apiKey = customApiKey || process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("No Gemini API Key found. Please add GEMINI_API_KEY to your .env file.");
-  }
-  
-  const prompt = `You are the Narrative Cortex, an AI dream archaeologist. Analyze the following dream memory and extract its dream graph entities and a thoughtful follow-up question.
-
-Dream Memory:
-"${inputText}"
-
-Return ONLY a valid JSON object matching this exact schema:
-{
-  "nodes": [
-    { "id": "n1", "type": "Character", "label": "Name of character/entity", "layer": "Conscious" },
-    { "id": "n2", "type": "Location", "label": "Setting name", "layer": "Symbolic" },
-    { "id": "n3", "type": "Totem", "label": "Key object/symbol", "layer": "Fear" },
-    { "id": "n4", "type": "Emotion", "label": "Core feeling", "layer": "Subconscious" }
-  ],
-  "followUp": "A fascinating, psychological follow-up question asking about a gap or deeper emotion in this dream to inspire further storytelling."
-}
-
-Types must be one of: Character, Location, Totem, Emotion, Action.
-Layers must be one of: Conscious, Memory, Symbolic, Fear, Subconscious.
-Generate 4 to 8 nodes based on the dream.`;
-
-  return await callGemini(prompt, apiKey);
-}
-
-export async function synthesizeScreenplayAI(inputText, followUpAnswer, lens, customApiKey = null) {
-  const apiKey = customApiKey || process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("No Gemini API Key found. Please add GEMINI_API_KEY to your .env file.");
-  }
-
-  const prompt = `You are the Narrative Cortex, an expert screenwriter and cinematic sound designer. Adapt the following dream memory into a short cinematic screenplay script using a "${lens}" narrative lens.
-
-Dream Memory: "${inputText}"
-${followUpAnswer ? `Additional Dreamer Context: "${followUpAnswer}"` : ""}
-Selected Narrative Lens: ${lens}
-
-Return ONLY a valid JSON object matching this exact schema:
-{
-  "title": "A captivating cinematic title for this dream",
-  "lens": "${lens}",
-  "characters": [
-    { "id": "char_1", "name": "Character Name", "role": "their role or archetype in the dream" },
-    { "id": "char_2", "name": "Second Character", "role": "their role" }
-  ],
-  "scenes": [
-    {
-      "id": 1,
-      "layer": "Subconscious Memory",
-      "setting": "Detailed description of the scene setting and lighting",
-      "emotional_tone": "The emotional atmosphere (e.g., uncanny, suspenseful, nostalgic)",
-      "lines": [
-        { "speaker": "Character Name or Narrator", "text": "Dramatic line of dialogue or internal narration revealing the dream's meaning." },
-        { "speaker": "Second Character", "text": "Response or reaction." }
-      ],
-      "sound_cues": [
-        { "type": "ambient", "prompt": "descriptive audio prompt for background sound (e.g. distant wind, humming wires)" },
-        { "type": "one-shot", "prompt": "specific sound effect (e.g. glass shattering, footsteps echoing)", "position": "during line 1" },
-        { "type": "music", "prompt": "musical score tone (e.g. low synth drone, cello crescendo)" }
-      ]
-    },
-    {
-      "id": 2,
-      "layer": "Symbolic Truth",
-      "setting": "Second setting or transformation of the dream space",
-      "emotional_tone": "Climax or resolution tone",
-      "lines": [
-        { "speaker": "Character Name", "text": "Final climactic realization or line." }
-      ],
-      "sound_cues": [
-        { "type": "music", "prompt": "swelling cinematic strings fading into silence" }
-      ]
+    if (scene.emotional_tone && !seenTones.has(scene.emotional_tone)) {
+      seenTones.add(scene.emotional_tone);
+      nodes.push({ id: `emo_${i}`, type: 'Emotion', label: scene.emotional_tone, layer: 'Subconscious' });
     }
-  ]
+  });
+
+  return {
+    nodes,
+    followUp: "Add any extra detail that could sharpen this reconstruction, or continue to synthesis as-is.",
+  };
 }
 
-Make the dialogue rich, atmospheric, and deeply tailored to the "${lens}" genre/lens. Create 2 to 3 vivid scenes. Ensure all JSON is perfectly formatted.`;
+/** Full dream archaeology pipeline (Modules 1->2->3->7): text -> reconstructed screenplay
+ * Story. The backend takes one text blob rather than a two-turn conversation, so a
+ * follow-up answer (if the dreamer added one) is folded into the input text. */
+export async function generateDreamStory(inputText, followUpAnswer, userId) {
+  const text = followUpAnswer && followUpAnswer.trim()
+    ? `${inputText}\n\nAdditional detail: ${followUpAnswer.trim()}`
+    : inputText;
+  const dreamResponse = await backendFetch('/api/dream', { text, user_id: userId });
+  return dreamResponse.story;
+}
 
-  return await callGemini(prompt, apiKey);
+/** Modules 8->9->10: emotion direction -> real Qwen3-TTS voices + Stable Audio music/SFX
+ * -> final mixdown. Returns a relative audio_url served by the same FastAPI app. */
+export async function generateAudio(story) {
+  return await backendFetch('/api/audio', { story });
 }
