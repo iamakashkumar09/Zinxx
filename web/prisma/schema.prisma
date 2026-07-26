@@ -1,0 +1,29 @@
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String   // Note: In production, hash this using bcrypt!
+  dreams    Dream[]
+  createdAt DateTime @default(now())
+}
+
+model Dream {
+  id         String   @id @default(cuid())
+  userId     String
+  inputText  String
+  storyData  Json
+  lens       String
+  isFavorite Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
