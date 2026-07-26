@@ -1,0 +1,55 @@
+# CPU-only setup: no CUDA index needed, plain PyPI gives CPU wheels for torch/torchaudio/torchvision.
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+groq==0.15.0
+openai==2.48.0
+# qwen-tts==0.1.1 hard-requires transformers==4.57.3 — do not downgrade this,
+# it will break `from qwen_tts import Qwen3TTSModel` in voice_generation.py.
+transformers==4.57.3
+torch==2.13.0
+torchaudio==2.11.0
+torchvision==0.28.0
+pydub==0.25.1
+numpy==2.2.1
+scipy==1.14.1
+python-dotenv==1.0.1
+pydantic==2.10.4
+python-multipart==0.0.20
+sqlalchemy==2.0.51
+aiosqlite==0.22.1
+
+soundfile
+hf_xet
+edge-tts==7.2.8
+
+# --- Qwen3-TTS (Module 9 voice generation) ---
+# `qwen-tts` is imported directly (qwen_tts) but was missing from this file entirely.
+# Its own METADATA hard-pins transformers==4.57.3 and accelerate==1.12.0 (see above/below).
+qwen-tts==0.1.1
+gradio==6.15.1
+librosa==0.11.0
+sox==1.5.0
+onnxruntime==1.28.0
+
+# --- Stable Audio Dependencies ---
+# stable-audio-tools explicitly locks Python < 3.11 and PyWavelets==1.4.1 (which crashes on 3.12),
+# plus torch==2.7.1/torchaudio==2.7.1, which conflicts with the newer torch qwen-tts needs.
+# We install its dependencies here with compatible newer versions instead, and install
+# stable-audio-tools itself with --no-deps so pip doesn't fight these stale locks:
+#   pip install --no-deps "git+https://github.com/Stability-AI/stable-audio-tools.git"
+einops==0.8.2
+einops-exts==0.0.4
+accelerate==1.12.0
+safetensors==0.8.0
+importlib-resources==7.1.0
+PyWavelets>=1.5.0
+nnAudio==0.3.4
+torchsde==0.2.6
+alias-free-torch==0.0.6
+dill
+sentencepiece>=0.2.0
+soxr
+v-diffusion-pytorch==0.0.2
+vector-quantize-pytorch==1.14.41
+pytorch-lightning
